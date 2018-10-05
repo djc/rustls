@@ -33,7 +33,7 @@ pub trait ClientQuicExt {
     /// TLS-encoded transport parameters to send.
     fn new_quic(config: &Arc<ClientConfig>, hostname: webpki::DNSNameRef, params: Vec<u8>)
                 -> ClientSession {
-        let mut imp = ClientSessionImpl::new(config);
+        let mut imp = ClientSessionImpl::new(config, true);
         imp.start_handshake(hostname.into(), vec![
             ClientExtension::Unknown(UnknownExtension {
                 typ: ExtensionType::TransportParameters,
@@ -58,7 +58,7 @@ pub trait ServerQuicExt {
                     typ: ExtensionType::TransportParameters,
                     payload: Payload::new(params),
                 }),
-            ]),
+            ], true),
         }
     }
 }

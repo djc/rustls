@@ -7,6 +7,7 @@ use msgs::codec::Codec;
 use msgs::message::Message;
 
 const HEADER_SIZE: usize = 1 + 2 + 2;
+const QUIC_HEADER_SIZE: usize = 2;
 
 /// This is the maximum on-the-wire size of a TLSCiphertext.
 /// That's 2^14 payload bytes, a header, and a 2KB allowance
@@ -17,6 +18,9 @@ const MAX_MESSAGE: usize = 16384 + 2048 + HEADER_SIZE;
 /// from arbitrary-sized reads, buffering as necessary.
 /// The input is `read()`, the output is the `frames` deque.
 pub struct MessageDeframer {
+    /// Whether we're expecting QUIC messages (no headers)
+    is_quic: bool,
+
     /// Completed frames for output.
     pub frames: VecDeque<Message>,
 
@@ -31,8 +35,9 @@ pub struct MessageDeframer {
 }
 
 impl MessageDeframer {
-    pub fn new() -> MessageDeframer {
+    pub fn new(is_quic: bool) -> MessageDeframer {
         MessageDeframer {
+            is_quic,
             frames: VecDeque::new(),
             desynced: false,
             buf: Vec::with_capacity(MAX_MESSAGE),
@@ -87,7 +92,9 @@ impl MessageDeframer {
     /// contain a header, and that header has a length which falls within `buf`.
     /// This returns None if it contains a header which is invalid.
     fn buf_contains_message(&self) -> Option<bool> {
-        if self.buf.len() < HEADER_SIZE {
+        if self.is_quic && self.buf.len() < QUIC_HEADER_SIZE {
+            return Some(false);
+        } else if !self.is_quic && self.buf.len() < HEADER_SIZE {
             return Some(false);
         }
 

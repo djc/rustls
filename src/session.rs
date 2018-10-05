@@ -391,6 +391,7 @@ enum Limit {
 pub struct SessionCommon {
     pub negotiated_version: Option<ProtocolVersion>,
     pub is_client: bool,
+    pub is_quic: bool,
     message_encrypter: Box<MessageEncrypter>,
     message_decrypter: Box<MessageDecrypter>,
     pub secrets: Option<SessionSecrets>,
@@ -413,10 +414,11 @@ pub struct SessionCommon {
 }
 
 impl SessionCommon {
-    pub fn new(mtu: Option<usize>, client: bool) -> SessionCommon {
+    pub fn new(mtu: Option<usize>, client: bool, is_quic: bool) -> SessionCommon {
         SessionCommon {
             negotiated_version: None,
             is_client: client,
+            is_quic,
             suite: None,
             message_encrypter: MessageEncrypter::invalid(),
             message_decrypter: MessageDecrypter::invalid(),
@@ -734,7 +736,11 @@ impl SessionCommon {
 
     /// Send a raw TLS message, fragmenting it if needed.
     pub fn send_msg(&mut self, m: Message, must_encrypt: bool) {
-        if !must_encrypt {
+        if self.is_quic {
+            let mut bytes = Vec::new();
+            m.payload.encode(&mut bytes);
+            self.sendable_tls.append(bytes);
+        } else if !must_encrypt {
             let mut to_send = VecDeque::new();
             self.message_fragmenter.fragment(m, &mut to_send);
             for mm in to_send {

@@ -375,12 +375,12 @@ impl fmt::Debug for ClientSessionImpl {
 }
 
 impl ClientSessionImpl {
-    pub fn new(config: &Arc<ClientConfig>) -> ClientSessionImpl {
+    pub fn new(config: &Arc<ClientConfig>, is_quic: bool) -> ClientSessionImpl {
         ClientSessionImpl {
             config: config.clone(),
             alpn_protocol: None,
             quic_params: None,
-            common: SessionCommon::new(config.mtu, true),
+            common: SessionCommon::new(config.mtu, true, is_quic),
             error: None,
             state: None,
             server_cert_chain: Vec::new(),
@@ -586,7 +586,7 @@ impl ClientSession {
     /// we behave in the TLS protocol, `hostname` is the
     /// hostname of who we want to talk to.
     pub fn new(config: &Arc<ClientConfig>, hostname: webpki::DNSNameRef) -> ClientSession {
-        let mut imp = ClientSessionImpl::new(config);
+        let mut imp = ClientSessionImpl::new(config, false);
         imp.start_handshake(hostname.into(), vec![]);
         ClientSession { imp }
     }

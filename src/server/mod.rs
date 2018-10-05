@@ -264,13 +264,13 @@ impl fmt::Debug for ServerSessionImpl {
 }
 
 impl ServerSessionImpl {
-    pub fn new(server_config: &Arc<ServerConfig>, extra_exts: Vec<ServerExtension>)
+    pub fn new(server_config: &Arc<ServerConfig>, extra_exts: Vec<ServerExtension>, is_quic: bool)
                -> ServerSessionImpl {
         let perhaps_client_auth = server_config.verifier.offer_client_auth();
 
         ServerSessionImpl {
             config: server_config.clone(),
-            common: SessionCommon::new(server_config.mtu, false),
+            common: SessionCommon::new(server_config.mtu, false, is_quic),
             sni: None,
             alpn_protocol: None,
             quic_params: None,
@@ -440,7 +440,7 @@ impl ServerSession {
     /// Make a new ServerSession.  `config` controls how
     /// we behave in the TLS protocol.
     pub fn new(config: &Arc<ServerConfig>) -> ServerSession {
-        ServerSession { imp: ServerSessionImpl::new(config, vec![]) }
+        ServerSession { imp: ServerSessionImpl::new(config, vec![], false) }
     }
 
     /// Retrieves the SNI hostname, if any, used to select the certificate and
