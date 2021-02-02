@@ -93,8 +93,8 @@ impl HandshakeHash {
 
     /// Hash or buffer a byte slice.
     fn update_raw(&mut self, buf: &[u8]) -> &mut Self {
-        if self.ctx.is_some() {
-            self.ctx.as_mut().unwrap().update(buf);
+        if let Some(ctx) = &mut self.ctx {
+            ctx.update(buf);
         }
 
         if self.ctx.is_none() || self.client_auth_enabled {
