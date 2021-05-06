@@ -412,7 +412,7 @@ fn emit_client_hello_for_retry(
     });
 
     let next = ExpectServerHello {
-        config: config.clone(),
+        config,
         resuming_session,
         dns_name,
         randoms,
