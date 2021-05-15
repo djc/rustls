@@ -3,8 +3,8 @@ use crate::conn::{ConnectionCommon, ConnectionRandoms};
 use crate::error::Error;
 use crate::hash_hs::HandshakeHash;
 use crate::key_schedule::{
-    KeyScheduleEarly, KeyScheduleHandshake, KeyScheduleNonSecret, KeyScheduleTraffic,
-    KeyScheduleTrafficWithClientFinishedPending,
+    KeyScheduleEarly, KeyScheduleHandshakeComplete, KeyScheduleHandshakeOutput,
+    KeyScheduleNonSecret, KeyScheduleTraffic, KeyScheduleTrafficWithClientFinishedPending,
 };
 use crate::kx;
 #[cfg(feature = "logging")]
@@ -38,7 +38,6 @@ use crate::client::{hs, ClientConfig};
 
 use crate::ticketer::TimeBase;
 use ring::constant_time;
-use ring::digest::Digest;
 
 use std::sync::Arc;
 
@@ -98,7 +97,7 @@ pub(super) fn handle_server_hello(
         .complete(&their_key_share.payload.0)
         .ok_or_else(|| Error::PeerMisbehavedError("key exchange failed".to_string()))?;
 
-    let mut key_schedule = if let (Some(selected_psk), Some(early_key_schedule)) =
+    let key_schedule = if let (Some(selected_psk), Some(early_key_schedule)) =
         (server_hello.get_psk_index(), early_key_schedule)
     {
         if let Some(ref resuming) = resuming_session {
@@ -150,43 +149,26 @@ pub(super) fn handle_server_hello(
     cx.common.check_aligned_handshake()?;
 
     let hash_at_client_recvd_server_hello = transcript.get_current_hash();
-
-    let _maybe_write_key = if !cx.data.early_data.is_enabled() {
-        // Set the client encryption key for handshakes if early data is not used
-        let write_key = key_schedule.client_handshake_traffic_secret(
-            &hash_at_client_recvd_server_hello,
-            &*config.key_log,
-            &randoms.client,
-        );
-        cx.common
-            .record_layer
-            .set_message_encrypter(cipher::new_tls13_write(suite, &write_key));
-        Some(write_key)
-    } else {
-        None
-    };
-
-    let read_key = key_schedule.server_handshake_traffic_secret(
+    let KeyScheduleHandshakeOutput {
+        complete,
+        server,
+        client,
+    } = key_schedule.into_handshake_complete(
         &hash_at_client_recvd_server_hello,
         &*config.key_log,
         &randoms.client,
     );
+
     cx.common
         .record_layer
-        .set_message_decrypter(cipher::new_tls13_read(suite, &read_key));
+        .set_message_encrypter(cipher::new_tls13_write(suite, &client));
+    cx.common
+        .record_layer
+        .set_message_decrypter(cipher::new_tls13_read(suite, &server));
 
     #[cfg(feature = "quic")]
     {
-        cx.common.quic.hs_secrets = Some(quic::Secrets {
-            server: read_key,
-            client: _maybe_write_key.unwrap_or_else(|| {
-                key_schedule.client_handshake_traffic_secret(
-                    &hash_at_client_recvd_server_hello,
-                    &*config.key_log,
-                    &randoms.client,
-                )
-            }),
-        });
+        cx.common.quic.hs_secrets = Some(quic::Secrets { server, client });
     }
 
     emit_fake_ccs(&mut sent_tls13_fake_ccs, cx.common);
@@ -198,9 +180,8 @@ pub(super) fn handle_server_hello(
         randoms,
         suite,
         transcript,
-        key_schedule,
+        key_schedule: complete,
         hello,
-        hash_at_client_recvd_server_hello,
     }))
 }
 
@@ -405,9 +386,8 @@ struct ExpectEncryptedExtensions {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     hello: ClientHelloDetails,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectEncryptedExtensions {
@@ -449,20 +429,6 @@ impl hs::State for ExpectEncryptedExtensions {
                 }
             }
 
-            if was_early_traffic && !cx.common.early_traffic {
-                // If no early traffic, set the encryption key for handshakes
-                let write_key = self
-                    .key_schedule
-                    .client_handshake_traffic_secret(
-                        &self.hash_at_client_recvd_server_hello,
-                        &*self.config.key_log,
-                        &self.randoms.client,
-                    );
-                cx.common
-                    .record_layer
-                    .set_message_encrypter(cipher::new_tls13_write(self.suite, &write_key));
-            }
-
             cx.data.server_cert_chain = resuming_session
                 .server_cert_chain
                 .clone();
@@ -481,7 +447,6 @@ impl hs::State for ExpectEncryptedExtensions {
                 client_auth: None,
                 cert_verified,
                 sig_verified,
-                hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
             }))
         } else {
             if exts.early_data_extension_offered() {
@@ -496,7 +461,6 @@ impl hs::State for ExpectEncryptedExtensions {
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
                 may_send_sct_list: self.hello.server_may_send_sct_list(),
-                hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
             }))
         }
     }
@@ -508,9 +472,8 @@ struct ExpectCertificateOrCertReq {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     may_send_sct_list: bool,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectCertificateOrCertReq {
@@ -533,7 +496,6 @@ impl hs::State for ExpectCertificateOrCertReq {
                 key_schedule: self.key_schedule,
                 may_send_sct_list: self.may_send_sct_list,
                 client_auth: None,
-                hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
             })
             .handle(cx, m)
         } else {
@@ -545,7 +507,6 @@ impl hs::State for ExpectCertificateOrCertReq {
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
                 may_send_sct_list: self.may_send_sct_list,
-                hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
             })
             .handle(cx, m)
         }
@@ -561,9 +522,8 @@ struct ExpectCertificateRequest {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     may_send_sct_list: bool,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectCertificateRequest {
@@ -639,7 +599,6 @@ impl hs::State for ExpectCertificateRequest {
             key_schedule: self.key_schedule,
             may_send_sct_list: self.may_send_sct_list,
             client_auth: Some(client_auth),
-            hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
         }))
     }
 }
@@ -650,10 +609,9 @@ struct ExpectCertificate {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     may_send_sct_list: bool,
     client_auth: Option<ClientAuthDetails>,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectCertificate {
@@ -711,7 +669,6 @@ impl hs::State for ExpectCertificate {
             key_schedule: self.key_schedule,
             server_cert,
             client_auth: self.client_auth,
-            hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
         }))
     }
 }
@@ -723,10 +680,9 @@ struct ExpectCertificateVerify {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     server_cert: ServerCertDetails,
     client_auth: Option<ClientAuthDetails>,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectCertificateVerify {
@@ -784,7 +740,6 @@ impl hs::State for ExpectCertificateVerify {
             client_auth: self.client_auth,
             cert_verified,
             sig_verified,
-            hash_at_client_recvd_server_hello: self.hash_at_client_recvd_server_hello,
         }))
     }
 }
@@ -899,11 +854,10 @@ struct ExpectFinished {
     randoms: ConnectionRandoms,
     suite: &'static SupportedCipherSuite,
     transcript: HandshakeHash,
-    key_schedule: KeyScheduleHandshake,
+    key_schedule: KeyScheduleHandshakeComplete,
     client_auth: Option<ClientAuthDetails>,
     cert_verified: verify::ServerCertVerified,
     sig_verified: verify::HandshakeSignatureValid,
-    hash_at_client_recvd_server_hello: Digest,
 }
 
 impl hs::State for ExpectFinished {
@@ -925,32 +879,18 @@ impl hs::State for ExpectFinished {
             })
             .map(|_| verify::FinishedMessageVerified::assertion())?;
 
-        let maybe_write_key = if cx.common.early_traffic {
-            /* Derive the client-to-server encryption key before key schedule update */
-            let key = st
-                .key_schedule
-                .client_handshake_traffic_secret(
-                    &st.hash_at_client_recvd_server_hello,
-                    &*st.config.key_log,
-                    &st.randoms.client,
-                );
-            Some(key)
-        } else {
-            None
-        };
-
         st.transcript.add_message(&m);
 
         let hash_after_handshake = st.transcript.get_current_hash();
         /* The EndOfEarlyData message to server is still encrypted with early data keys,
          * but appears in the transcript after the server Finished. */
-        if let Some(write_key) = maybe_write_key {
+        if cx.common.early_traffic {
             emit_end_of_early_data_tls13(&mut st.transcript, cx.common);
             cx.common.early_traffic = false;
             cx.data.early_data.finished();
             cx.common
                 .record_layer
-                .set_message_encrypter(cipher::new_tls13_write(st.suite, &write_key));
+                .start_encrypting();
         }
 
         /* Send our authentication/finished messages.  These are still encrypted

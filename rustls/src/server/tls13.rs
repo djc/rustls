@@ -33,7 +33,10 @@ use ring::digest::Digest;
 pub(super) use client_hello::CompleteClientHelloHandling;
 
 mod client_hello {
-    use crate::key_schedule::{KeyScheduleEarly, KeyScheduleHandshake, KeyScheduleNonSecret};
+    use crate::key_schedule::{
+        KeyScheduleEarly, KeyScheduleHandshakeComplete, KeyScheduleHandshakeOutput,
+        KeyScheduleNonSecret,
+    };
     use crate::kx;
     use crate::msgs::base::{Payload, PayloadU8};
     use crate::msgs::ccs::ChangeCipherSpecPayload;
@@ -376,7 +379,7 @@ mod client_hello {
         chosen_psk_idx: Option<usize>,
         resuming_psk: Option<&[u8]>,
         config: &ServerConfig,
-    ) -> Result<KeyScheduleHandshake, Error> {
+    ) -> Result<KeyScheduleHandshakeComplete, Error> {
         let mut extensions = Vec::new();
 
         // Do key exchange
@@ -419,7 +422,7 @@ mod client_hello {
         cx.common.send_msg(sh, false);
 
         // Start key schedule
-        let mut key_schedule = if let Some(psk) = resuming_psk {
+        let key_schedule = if let Some(psk) = resuming_psk {
             let early_key_schedule = KeyScheduleEarly::new(suite.hkdf_algorithm, psk);
 
             #[cfg(feature = "quic")]
@@ -443,33 +446,29 @@ mod client_hello {
         };
 
         let handshake_hash = transcript.get_current_hash();
-        let write_key = key_schedule.server_handshake_traffic_secret(
+        let KeyScheduleHandshakeOutput {
+            complete,
+            server,
+            client,
+        } = key_schedule.into_handshake_complete(
             &handshake_hash,
             &*config.key_log,
             &randoms.client,
         );
-        cx.common
-            .record_layer
-            .set_message_encrypter(cipher::new_tls13_write(suite, &write_key));
 
-        let read_key = key_schedule.client_handshake_traffic_secret(
-            &handshake_hash,
-            &*config.key_log,
-            &randoms.client,
-        );
         cx.common
             .record_layer
-            .set_message_decrypter(cipher::new_tls13_read(suite, &read_key));
+            .set_message_encrypter(cipher::new_tls13_write(suite, &server));
+        cx.common
+            .record_layer
+            .set_message_decrypter(cipher::new_tls13_read(suite, &client));
 
         #[cfg(feature = "quic")]
         {
-            cx.common.quic.hs_secrets = Some(quic::Secrets {
-                client: read_key,
-                server: write_key,
-            });
+            cx.common.quic.hs_secrets = Some(quic::Secrets { client, server });
         }
 
-        Ok(key_schedule)
+        Ok(complete)
     }
 
     fn emit_fake_ccs(common: &mut ConnectionCommon) {
@@ -688,7 +687,7 @@ mod client_hello {
         suite: &'static SupportedCipherSuite,
         randoms: &ConnectionRandoms,
         cx: &mut ServerContext<'_>,
-        key_schedule: KeyScheduleHandshake,
+        key_schedule: KeyScheduleHandshakeComplete,
         config: &ServerConfig,
     ) -> (KeyScheduleTrafficWithClientFinishedPending, Digest) {
         let handshake_hash = transcript.get_current_hash();
