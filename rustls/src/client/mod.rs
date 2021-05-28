@@ -385,7 +385,12 @@ impl<'a> WriteEarlyData<'a> {
     /// How many bytes you may send.  Writes will become short
     /// once this reaches zero.
     pub fn bytes_left(&self) -> usize {
-        self.sess.data.early_data.bytes_left()
+        self.sess
+            .common
+            .common_state
+            .data
+            .early_data
+            .bytes_left()
     }
 }
 
@@ -401,9 +406,8 @@ impl<'a> io::Write for WriteEarlyData<'a> {
 
 /// This represents a single TLS client connection.
 pub struct ClientConnection {
-    common: ConnectionCommon,
+    common: ConnectionCommon<ClientConnectionData>,
     state: Option<hs::NextState>,
-    data: ClientConnectionData,
 }
 
 impl fmt::Debug for ClientConnection {
@@ -427,21 +431,20 @@ impl ClientConnection {
         extra_exts: Vec<ClientExtension>,
         proto: Protocol,
     ) -> Result<Self, Error> {
-        let mut common_state = CommonState::new(config.max_fragment_size, true)?;
+        let mut common_state =
+            CommonState::new(ClientConnectionData::new(), config.max_fragment_size, true)?;
         common_state.protocol = proto;
-        let mut data = ClientConnectionData::new();
 
-        let mut cx = hs::ClientContext {
-            common: &mut common_state,
-            data: &mut data,
-        };
-
-        let state = Some(hs::start_handshake(name, extra_exts, config, &mut cx)?);
+        let state = Some(hs::start_handshake(
+            name,
+            extra_exts,
+            config,
+            &mut common_state,
+        )?);
 
         Ok(Self {
             common: ConnectionCommon::new(common_state),
             state,
-            data,
         })
     }
 
@@ -464,7 +467,13 @@ impl ClientConnection {
     /// in this case the data is lost but the connection continues.  You
     /// can tell this happened using `is_early_data_accepted`.
     pub fn early_data(&mut self) -> Option<WriteEarlyData> {
-        if self.data.early_data.is_enabled() {
+        if self
+            .common
+            .common_state
+            .data
+            .early_data
+            .is_enabled()
+        {
             Some(WriteEarlyData::new(self))
         } else {
             None
@@ -477,11 +486,17 @@ impl ClientConnection {
     /// handshake then the server will not process the data.  This
     /// is not an error, but you may wish to resend the data.
     pub fn is_early_data_accepted(&self) -> bool {
-        self.data.early_data.is_accepted()
+        self.common
+            .common_state
+            .data
+            .early_data
+            .is_accepted()
     }
 
     fn write_early_data(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.data
+        self.common
+            .common_state
+            .data
             .early_data
             .check_write(data.len())
             .map(|sz| {
@@ -513,7 +528,7 @@ impl Connection for ClientConnection {
 
     fn process_new_packets(&mut self) -> Result<IoState, Error> {
         self.common
-            .process_new_packets(&mut self.state, &mut self.data)
+            .process_new_packets(&mut self.state)
     }
 
     fn wants_read(&self) -> bool {
@@ -543,11 +558,23 @@ impl Connection for ClientConnection {
     }
 
     fn peer_certificates(&self) -> Option<&[key::Certificate]> {
-        if self.data.server_cert_chain.is_empty() {
+        if self
+            .common
+            .common_state
+            .data
+            .server_cert_chain
+            .is_empty()
+        {
             return None;
         }
 
-        Some(&self.data.server_cert_chain)
+        Some(
+            &self
+                .common
+                .common_state
+                .data
+                .server_cert_chain,
+        )
     }
 
     fn alpn_protocol(&self) -> Option<&[u8]> {
@@ -576,7 +603,11 @@ impl Connection for ClientConnection {
         self.common
             .common_state
             .get_suite()
-            .or(self.data.resumption_ciphersuite)
+            .or(self
+                .common
+                .common_state
+                .data
+                .resumption_ciphersuite)
     }
 
     fn writer(&mut self) -> Writer {
@@ -635,7 +666,9 @@ impl quic::QuicExt for ClientConnection {
 
     fn zero_rtt_keys(&self) -> Option<quic::DirectionalKeys> {
         Some(quic::DirectionalKeys::new(
-            self.data
+            self.common
+                .common_state
+                .data
                 .resumption_ciphersuite
                 .and_then(|suite| suite.tls13())?,
             self.common
@@ -649,7 +682,7 @@ impl quic::QuicExt for ClientConnection {
     fn read_hs(&mut self, plaintext: &[u8]) -> Result<(), Error> {
         quic::read_hs(&mut self.common, plaintext)?;
         self.common
-            .process_new_handshake_messages(&mut self.state, &mut self.data)
+            .process_new_handshake_messages(&mut self.state)
     }
 
     fn write_hs(&mut self, buf: &mut Vec<u8>) -> Option<quic::Keys> {

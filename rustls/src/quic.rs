@@ -155,7 +155,10 @@ impl Keys {
     }
 }
 
-pub(crate) fn read_hs(this: &mut ConnectionCommon, plaintext: &[u8]) -> Result<(), Error> {
+pub(crate) fn read_hs<Data>(
+    this: &mut ConnectionCommon<Data>,
+    plaintext: &[u8],
+) -> Result<(), Error> {
     if this
         .handshake_joiner
         .take_message(PlainMessage {
@@ -171,7 +174,7 @@ pub(crate) fn read_hs(this: &mut ConnectionCommon, plaintext: &[u8]) -> Result<(
     Ok(())
 }
 
-pub(crate) fn write_hs(this: &mut CommonState, buf: &mut Vec<u8>) -> Option<Keys> {
+pub(crate) fn write_hs<Data>(this: &mut CommonState<Data>, buf: &mut Vec<u8>) -> Option<Keys> {
     while let Some((_, msg)) = this.quic.hs_queue.pop_front() {
         buf.extend_from_slice(&msg);
         if let Some(&(true, _)) = this.quic.hs_queue.front() {
@@ -199,7 +202,7 @@ pub(crate) fn write_hs(this: &mut CommonState, buf: &mut Vec<u8>) -> Option<Keys
     None
 }
 
-pub(crate) fn next_1rtt_keys(this: &mut CommonState) -> Option<PacketKeySet> {
+pub(crate) fn next_1rtt_keys<Data>(this: &mut CommonState<Data>) -> Option<PacketKeySet> {
     let suite = this
         .get_suite()
         .and_then(|suite| suite.tls13())?;

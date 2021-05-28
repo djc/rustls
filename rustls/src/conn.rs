@@ -599,8 +599,8 @@ enum Limit {
     No,
 }
 
-pub(crate) struct ConnectionCommon {
-    pub(crate) common_state: CommonState,
+pub(crate) struct ConnectionCommon<Data> {
+    pub(crate) common_state: CommonState<Data>,
     peer_eof: bool,
     received_middlebox_ccs: bool,
     error: Option<Error>,
@@ -608,8 +608,8 @@ pub(crate) struct ConnectionCommon {
     pub(crate) handshake_joiner: HandshakeJoiner,
 }
 
-impl ConnectionCommon {
-    pub(crate) fn new(common_state: CommonState) -> Self {
+impl<Data> ConnectionCommon<Data> {
+    pub(crate) fn new(common_state: CommonState<Data>) -> Self {
         Self {
             common_state,
             peer_eof: false,
@@ -697,10 +697,9 @@ impl ConnectionCommon {
         Ok(Some(MessageType::Data(msg)))
     }
 
-    pub(crate) fn process_new_packets<S: HandleState>(
+    pub(crate) fn process_new_packets<S: HandleState<Data>>(
         &mut self,
         state: &mut Option<S>,
-        data: &mut S::Data,
     ) -> Result<IoState, Error> {
         if let Some(ref err) = self.error {
             return Err(err.clone());
@@ -714,12 +713,10 @@ impl ConnectionCommon {
             let result = self
                 .process_msg(msg)
                 .and_then(|val| match val {
-                    Some(MessageType::Handshake) => {
-                        self.process_new_handshake_messages(state, data)
-                    }
+                    Some(MessageType::Handshake) => self.process_new_handshake_messages(state),
                     Some(MessageType::Data(msg)) => self
                         .common_state
-                        .process_main_protocol(msg, state, data),
+                        .process_main_protocol(msg, state),
                     None => Ok(()),
                 });
 
@@ -732,15 +729,14 @@ impl ConnectionCommon {
         Ok(self.current_io_state())
     }
 
-    pub(crate) fn process_new_handshake_messages<S: HandleState>(
+    pub(crate) fn process_new_handshake_messages<S: HandleState<Data>>(
         &mut self,
         state: &mut Option<S>,
-        data: &mut S::Data,
     ) -> Result<(), Error> {
         self.common_state.aligned_handshake = self.handshake_joiner.is_empty();
         while let Some(msg) = self.handshake_joiner.frames.pop_front() {
             self.common_state
-                .process_main_protocol(msg, state, data)?;
+                .process_main_protocol(msg, state)?;
         }
 
         Ok(())
@@ -845,7 +841,8 @@ impl ConnectionCommon {
     }
 }
 
-pub(crate) struct CommonState {
+pub(crate) struct CommonState<Data> {
+    pub(crate) data: Data,
     pub(crate) negotiated_version: Option<ProtocolVersion>,
     pub(crate) is_client: bool,
     pub(crate) record_layer: record_layer::RecordLayer,
@@ -866,9 +863,14 @@ pub(crate) struct CommonState {
     pub(crate) quic: Quic,
 }
 
-impl CommonState {
-    pub(crate) fn new(max_fragment_size: Option<usize>, is_client: bool) -> Result<Self, Error> {
+impl<Data> CommonState<Data> {
+    pub(crate) fn new(
+        data: Data,
+        max_fragment_size: Option<usize>,
+        is_client: bool,
+    ) -> Result<Self, Error> {
         Ok(Self {
+            data,
             negotiated_version: None,
             is_client,
             record_layer: record_layer::RecordLayer::new(),
@@ -897,11 +899,10 @@ impl CommonState {
     /// Process `msg`.  First, we get the current state.  Then we ask what messages
     /// that state expects, enforced via `check_message`.  Finally, we ask the handler
     /// to handle the message.
-    fn process_main_protocol<S: HandleState>(
+    fn process_main_protocol<S: HandleState<Data>>(
         &mut self,
         msg: Message,
         state: &mut Option<S>,
-        data: &mut S::Data,
     ) -> Result<(), Error> {
         // For TLS1.2, outside of the handshake, send rejection alerts for
         // renegotiation requests.  These can occur any time.
@@ -917,7 +918,7 @@ impl CommonState {
         }
 
         let current = state.take().unwrap();
-        match current.handle(msg, data, self) {
+        match current.handle(self, msg) {
             Ok(next) => {
                 *state = Some(next);
                 Ok(())
@@ -1170,15 +1171,8 @@ impl CommonState {
     }
 }
 
-pub(crate) trait HandleState: Sized {
-    type Data;
-
-    fn handle(
-        self,
-        message: Message,
-        data: &mut Self::Data,
-        common: &mut CommonState,
-    ) -> Result<Self, Error>;
+pub(crate) trait HandleState<Data>: Sized {
+    fn handle(self, common: &mut CommonState<Data>, message: Message) -> Result<Self, Error>;
 }
 
 enum MessageType {

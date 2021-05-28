@@ -4,8 +4,8 @@ use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::{AlertDescription, ContentType};
 use crate::Error;
 
-pub(crate) fn decode_ecdh_params<T: Codec>(
-    conn: &mut CommonState,
+pub(crate) fn decode_ecdh_params<T: Codec, Data>(
+    conn: &mut CommonState<Data>,
     kx_params: &[u8],
 ) -> Result<T, Error> {
     decode_ecdh_params_::<T>(kx_params).ok_or_else(|| {

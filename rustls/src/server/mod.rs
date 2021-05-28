@@ -246,9 +246,8 @@ impl ServerConfig {
 /// Send TLS-protected data to the peer using the `io::Write` trait implementation.
 /// Read data from the peer using the `io::Read` trait implementation.
 pub struct ServerConnection {
-    common: ConnectionCommon,
+    common: ConnectionCommon<ServerConnectionData>,
     state: Option<Box<dyn hs::State>>,
-    data: ServerConnectionData,
 }
 
 impl ServerConnection {
@@ -263,9 +262,12 @@ impl ServerConnection {
         extra_exts: Vec<ServerExtension>,
     ) -> Result<Self, Error> {
         Ok(Self {
-            common: ConnectionCommon::new(CommonState::new(config.max_fragment_size, false)?),
+            common: ConnectionCommon::new(CommonState::new(
+                ServerConnectionData::default(),
+                config.max_fragment_size,
+                false,
+            )?),
             state: Some(Box::new(hs::ExpectClientHello::new(config, extra_exts))),
-            data: ServerConnectionData::default(),
         })
     }
 
@@ -286,7 +288,10 @@ impl ServerConnection {
     /// The SNI hostname is also used to match sessions during session
     /// resumption.
     pub fn sni_hostname(&self) -> Option<&str> {
-        self.data.get_sni_str()
+        self.common
+            .common_state
+            .data
+            .get_sni_str()
     }
 
     /// Application-controlled portion of the resumption ticket supplied by the client, if any.
@@ -295,7 +300,9 @@ impl ServerConnection {
     ///
     /// Returns `Some` iff a valid resumption ticket has been received from the client.
     pub fn received_resumption_data(&self) -> Option<&[u8]> {
-        self.data
+        self.common
+            .common_state
+            .data
             .received_resumption_data
             .as_ref()
             .map(|x| &x[..])
@@ -311,7 +318,10 @@ impl ServerConnection {
     /// from the client is desired, encrypt the data separately.
     pub fn set_resumption_data(&mut self, data: &[u8]) {
         assert!(data.len() < 2usize.pow(15));
-        self.data.resumption_data = data.into();
+        self.common
+            .common_state
+            .data
+            .resumption_data = data.into();
     }
 
     /// Explicitly discard early data, notifying the client
@@ -324,7 +334,10 @@ impl ServerConnection {
             self.is_handshaking(),
             "cannot retroactively reject early data"
         );
-        self.data.reject_early_data = true;
+        self.common
+            .common_state
+            .data
+            .reject_early_data = true;
     }
 
     fn send_some_plaintext(&mut self, buf: &[u8]) -> usize {
@@ -349,7 +362,7 @@ impl Connection for ServerConnection {
 
     fn process_new_packets(&mut self) -> Result<IoState, Error> {
         self.common
-            .process_new_packets(&mut self.state, &mut self.data)
+            .process_new_packets(&mut self.state)
     }
 
     fn wants_read(&self) -> bool {
@@ -379,7 +392,11 @@ impl Connection for ServerConnection {
     }
 
     fn peer_certificates(&self) -> Option<&[key::Certificate]> {
-        self.data.client_cert_chain.as_deref()
+        self.common
+            .common_state
+            .data
+            .client_cert_chain
+            .as_deref()
     }
 
     fn alpn_protocol(&self) -> Option<&[u8]> {
@@ -494,7 +511,7 @@ impl quic::QuicExt for ServerConnection {
     fn read_hs(&mut self, plaintext: &[u8]) -> Result<(), Error> {
         quic::read_hs(&mut self.common, plaintext)?;
         self.common
-            .process_new_handshake_messages(&mut self.state, &mut self.data)
+            .process_new_handshake_messages(&mut self.state)
     }
 
     fn write_hs(&mut self, buf: &mut Vec<u8>) -> Option<quic::Keys> {
