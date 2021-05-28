@@ -589,55 +589,24 @@ enum Limit {
 }
 
 pub(crate) struct ConnectionCommon {
-    pub(crate) negotiated_version: Option<ProtocolVersion>,
-    pub(crate) is_client: bool,
-    pub(crate) record_layer: record_layer::RecordLayer,
-    pub(crate) suite: Option<SupportedCipherSuite>,
-    pub(crate) alpn_protocol: Option<Vec<u8>>,
+    pub(crate) common_state: CommonState,
     peer_eof: bool,
-    pub(crate) traffic: bool,
-    pub(crate) early_traffic: bool,
-    sent_fatal_alert: bool,
     received_middlebox_ccs: bool,
     error: Option<Error>,
     message_deframer: MessageDeframer,
     pub(crate) handshake_joiner: HandshakeJoiner,
-    pub(crate) message_fragmenter: MessageFragmenter,
-    received_plaintext: ChunkVecBuffer,
-    sendable_plaintext: ChunkVecBuffer,
-    pub(crate) sendable_tls: ChunkVecBuffer,
-    #[allow(dead_code)] // only read for QUIC
-    /// Protocol whose key schedule should be used. Unused for TLS < 1.3.
-    pub(crate) protocol: Protocol,
-    #[cfg(feature = "quic")]
-    pub(crate) quic: Quic,
 }
 
 impl ConnectionCommon {
-    pub(crate) fn new(max_fragment_size: Option<usize>, client: bool) -> Result<Self, Error> {
-        Ok(Self {
-            negotiated_version: None,
-            is_client: client,
-            record_layer: record_layer::RecordLayer::new(),
-            suite: None,
-            alpn_protocol: None,
+    pub(crate) fn new(common_state: CommonState) -> Self {
+        Self {
+            common_state,
             peer_eof: false,
-            traffic: false,
-            early_traffic: false,
-            sent_fatal_alert: false,
             received_middlebox_ccs: false,
             error: None,
             message_deframer: MessageDeframer::new(),
             handshake_joiner: HandshakeJoiner::new(),
-            message_fragmenter: MessageFragmenter::new(max_fragment_size)
-                .map_err(|_| Error::BadMaxFragmentSize)?,
-            received_plaintext: ChunkVecBuffer::new(None),
-            sendable_plaintext: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
-            sendable_tls: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
-            protocol: Protocol::Tcp,
-            #[cfg(feature = "quic")]
-            quic: Quic::new(),
-        })
+        }
     }
 
     pub(crate) fn reader(&mut self) -> Reader {
@@ -646,14 +615,13 @@ impl ConnectionCommon {
 
     fn current_io_state(&self) -> IoState {
         IoState {
-            tls_bytes_to_write: self.sendable_tls.len(),
-            plaintext_bytes_to_read: self.received_plaintext.len(),
+            tls_bytes_to_write: self.common_state.sendable_tls.len(),
+            plaintext_bytes_to_read: self
+                .common_state
+                .received_plaintext
+                .len(),
             peer_has_closed: self.peer_eof,
         }
-    }
-
-    pub(crate) fn is_tls13(&self) -> bool {
-        matches!(self.negotiated_version, Some(ProtocolVersion::TLSv1_3))
     }
 
     fn process_msg(&mut self, msg: OpaqueMessage) -> Result<Option<MessageType>, Error> {
@@ -662,7 +630,10 @@ impl ConnectionCommon {
         // - prior to determining the version (it's illegal as a first message)
         // - if it's not a CCS at all
         // - if we've finished the handshake
-        if msg.typ == ContentType::ChangeCipherSpec && !self.traffic && self.is_tls13() {
+        if msg.typ == ContentType::ChangeCipherSpec
+            && !self.common_state.traffic
+            && self.common_state.is_tls13()
+        {
             if self.received_middlebox_ccs {
                 return Err(Error::PeerMisbehavedError(
                     "illegal middlebox CCS received".into(),
@@ -675,8 +646,14 @@ impl ConnectionCommon {
         }
 
         // Decrypt if demanded by current state.
-        let msg = match self.record_layer.is_decrypting() {
-            true => self.decrypt_incoming(msg)?,
+        let msg = match self
+            .common_state
+            .record_layer
+            .is_decrypting()
+        {
+            true => self
+                .common_state
+                .decrypt_incoming(msg)?,
             false => msg.into_plain_message(),
         };
 
@@ -686,7 +663,8 @@ impl ConnectionCommon {
             self.handshake_joiner
                 .take_message(msg)
                 .ok_or_else(|| {
-                    self.send_fatal_alert(AlertDescription::DecodeError);
+                    self.common_state
+                        .send_fatal_alert(AlertDescription::DecodeError);
                     Error::CorruptMessagePayload(ContentType::Handshake)
                 })?;
             return Ok(Some(MessageType::Handshake));
@@ -723,7 +701,9 @@ impl ConnectionCommon {
                     Some(MessageType::Handshake) => {
                         self.process_new_handshake_messages(state, data)
                     }
-                    Some(MessageType::Data(msg)) => self.process_main_protocol(msg, state, data),
+                    Some(MessageType::Data(msg)) => self
+                        .common_state
+                        .process_main_protocol(msg, state, data),
                     None => Ok(()),
                 });
 
@@ -741,11 +721,187 @@ impl ConnectionCommon {
         state: &mut Option<S>,
         data: &mut S::Data,
     ) -> Result<(), Error> {
+        self.common_state.aligned_handshake = self.handshake_joiner.is_empty();
         while let Some(msg) = self.handshake_joiner.frames.pop_front() {
-            self.process_main_protocol(msg, state, data)?;
+            self.common_state
+                .process_main_protocol(msg, state, data)?;
         }
 
         Ok(())
+    }
+
+    pub(crate) fn get_alpn_protocol(&self) -> Option<&[u8]> {
+        self.common_state
+            .alpn_protocol
+            .as_ref()
+            .map(AsRef::as_ref)
+    }
+
+    pub(crate) fn wants_read(&self) -> bool {
+        // We want to read more data all the time, except when we have unprocessed plaintext.
+        // This provides back-pressure to the TCP buffers. We also don't want to read more after
+        // the peer has sent us a close notification.
+        //
+        // In the handshake case we don't have readable plaintext before the handshake has
+        // completed, but also don't want to read if we still have sendable tls.
+        self.common_state
+            .received_plaintext
+            .is_empty()
+            && !self.peer_eof
+            && (self.common_state.traffic
+                || self
+                    .common_state
+                    .sendable_tls
+                    .is_empty())
+    }
+
+    pub(crate) fn set_buffer_limit(&mut self, limit: Option<usize>) {
+        self.common_state
+            .sendable_plaintext
+            .set_limit(limit);
+        self.common_state
+            .sendable_tls
+            .set_limit(limit);
+    }
+
+    fn process_alert(&mut self, alert: &AlertMessagePayload) -> Result<(), Error> {
+        // Reject unknown AlertLevels.
+        if let AlertLevel::Unknown(_) = alert.level {
+            self.common_state
+                .send_fatal_alert(AlertDescription::IllegalParameter);
+        }
+
+        // If we get a CloseNotify, make a note to declare EOF to our
+        // caller.
+        if alert.description == AlertDescription::CloseNotify {
+            self.peer_eof = true;
+            return Ok(());
+        }
+
+        // Warnings are nonfatal for TLS1.2, but outlawed in TLS1.3
+        // (except, for no good reason, user_cancelled).
+        if alert.level == AlertLevel::Warning {
+            if self.common_state.is_tls13() && alert.description != AlertDescription::UserCanceled {
+                self.common_state
+                    .send_fatal_alert(AlertDescription::DecodeError);
+            } else {
+                warn!("TLS alert warning received: {:#?}", alert);
+                return Ok(());
+            }
+        }
+
+        error!("TLS alert received: {:#?}", alert);
+        Err(Error::AlertReceived(alert.description))
+    }
+
+
+    /// Are we done? i.e., have we processed all received messages,
+    /// and received a close_notify to indicate that no new messages
+    /// will arrive?
+    fn connection_at_eof(&self) -> bool {
+        self.peer_eof && !self.message_deframer.has_pending()
+    }
+
+    /// Read TLS content from `rd`.  This method does internal
+    /// buffering, so `rd` can supply TLS messages in arbitrary-
+    /// sized chunks (like a socket or pipe might).
+    pub(crate) fn read_tls(&mut self, rd: &mut dyn io::Read) -> io::Result<usize> {
+        self.message_deframer.read(rd)
+    }
+
+    /// Send plaintext application data, fragmenting and
+    /// encrypting it as it goes out.
+    ///
+    /// If internal buffers are too small, this function will not accept
+    /// all the data.
+    pub(crate) fn send_some_plaintext(&mut self, data: &[u8]) -> usize {
+        self.common_state
+            .send_plain(data, Limit::Yes)
+    }
+
+    pub(crate) fn send_early_plaintext(&mut self, data: &[u8]) -> usize {
+        debug_assert!(self.common_state.early_traffic);
+        debug_assert!(
+            self.common_state
+                .record_layer
+                .is_encrypting()
+        );
+
+        if data.is_empty() {
+            // Don't send empty fragments.
+            return 0;
+        }
+
+        self.common_state
+            .send_appdata_encrypt(data, Limit::Yes)
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = self
+            .common_state
+            .received_plaintext
+            .read(buf)?;
+
+        if len == 0 && !buf.is_empty() {
+            // no bytes available:
+            // - if we received a close_notify, this is a genuine permanent EOF
+            // - otherwise say EWOULDBLOCK
+            if !self.connection_at_eof() {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+        }
+
+        Ok(len)
+    }
+}
+
+pub(crate) struct CommonState {
+    pub(crate) negotiated_version: Option<ProtocolVersion>,
+    pub(crate) is_client: bool,
+    pub(crate) record_layer: record_layer::RecordLayer,
+    pub(crate) suite: Option<SupportedCipherSuite>,
+    pub(crate) alpn_protocol: Option<Vec<u8>>,
+    aligned_handshake: bool,
+    pub(crate) traffic: bool,
+    pub(crate) early_traffic: bool,
+    sent_fatal_alert: bool,
+    pub(crate) message_fragmenter: MessageFragmenter,
+    received_plaintext: ChunkVecBuffer,
+    sendable_plaintext: ChunkVecBuffer,
+    pub(crate) sendable_tls: ChunkVecBuffer,
+    #[allow(dead_code)] // only read for QUIC
+    /// Protocol whose key schedule should be used. Unused for TLS < 1.3.
+    pub(crate) protocol: Protocol,
+    #[cfg(feature = "quic")]
+    pub(crate) quic: Quic,
+}
+
+impl CommonState {
+    pub(crate) fn new(max_fragment_size: Option<usize>, is_client: bool) -> Result<Self, Error> {
+        Ok(Self {
+            negotiated_version: None,
+            is_client,
+            record_layer: record_layer::RecordLayer::new(),
+            suite: None,
+            alpn_protocol: None,
+            aligned_handshake: true,
+            traffic: false,
+            early_traffic: false,
+            sent_fatal_alert: false,
+            message_fragmenter: MessageFragmenter::new(max_fragment_size)
+                .map_err(|_| Error::BadMaxFragmentSize)?,
+            received_plaintext: ChunkVecBuffer::new(Some(0)),
+            sendable_plaintext: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
+            sendable_tls: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
+
+            protocol: Protocol::Tcp,
+            #[cfg(feature = "quic")]
+            quic: Quic::new(),
+        })
+    }
+
+    pub(crate) fn is_tls13(&self) -> bool {
+        matches!(self.negotiated_version, Some(ProtocolVersion::TLSv1_3))
     }
 
     /// Process `msg`.  First, we get the current state.  Then we ask what messages
@@ -790,7 +946,7 @@ impl ConnectionCommon {
     // been protected with two different record layer protections,
     // which is illegal.  Not mentioned in RFC.
     pub(crate) fn check_aligned_handshake(&mut self) -> Result<(), Error> {
-        if !self.handshake_joiner.is_empty() {
+        if !self.aligned_handshake {
             self.send_fatal_alert(AlertDescription::UnexpectedMessage);
             Err(Error::PeerMisbehavedError(
                 "key epoch or handshake flight with pending fragment".to_string(),
@@ -809,12 +965,6 @@ impl ConnectionCommon {
         self.suite
     }
 
-    pub(crate) fn get_alpn_protocol(&self) -> Option<&[u8]> {
-        self.alpn_protocol
-            .as_ref()
-            .map(AsRef::as_ref)
-    }
-
     pub(crate) fn decrypt_incoming(&mut self, encr: OpaqueMessage) -> Result<PlainMessage, Error> {
         if self
             .record_layer
@@ -828,51 +978,6 @@ impl ConnectionCommon {
             self.send_fatal_alert(AlertDescription::RecordOverflow);
         }
         rc
-    }
-
-    pub(crate) fn wants_read(&self) -> bool {
-        // We want to read more data all the time, except when we have unprocessed plaintext.
-        // This provides back-pressure to the TCP buffers. We also don't want to read more after
-        // the peer has sent us a close notification.
-        //
-        // In the handshake case we don't have readable plaintext before the handshake has
-        // completed, but also don't want to read if we still have sendable tls.
-        self.received_plaintext.is_empty()
-            && !self.peer_eof
-            && (self.traffic || self.sendable_tls.is_empty())
-    }
-
-    pub(crate) fn set_buffer_limit(&mut self, limit: Option<usize>) {
-        self.sendable_plaintext.set_limit(limit);
-        self.sendable_tls.set_limit(limit);
-    }
-
-    fn process_alert(&mut self, alert: &AlertMessagePayload) -> Result<(), Error> {
-        // Reject unknown AlertLevels.
-        if let AlertLevel::Unknown(_) = alert.level {
-            self.send_fatal_alert(AlertDescription::IllegalParameter);
-        }
-
-        // If we get a CloseNotify, make a note to declare EOF to our
-        // caller.
-        if alert.description == AlertDescription::CloseNotify {
-            self.peer_eof = true;
-            return Ok(());
-        }
-
-        // Warnings are nonfatal for TLS1.2, but outlawed in TLS1.3
-        // (except, for no good reason, user_cancelled).
-        if alert.level == AlertLevel::Warning {
-            if self.is_tls13() && alert.description != AlertDescription::UserCanceled {
-                self.send_fatal_alert(AlertDescription::DecodeError);
-            } else {
-                warn!("TLS alert warning received: {:#?}", alert);
-                return Ok(());
-            }
-        }
-
-        error!("TLS alert received: {:#?}", alert);
-        Err(Error::AlertReceived(alert.description))
     }
 
     /// Fragment `m`, encrypt the fragments, and then queue
@@ -935,43 +1040,8 @@ impl ConnectionCommon {
         self.queue_tls_message(em);
     }
 
-    /// Are we done? i.e., have we processed all received messages,
-    /// and received a close_notify to indicate that no new messages
-    /// will arrive?
-    fn connection_at_eof(&self) -> bool {
-        self.peer_eof && !self.message_deframer.has_pending()
-    }
-
-    /// Read TLS content from `rd`.  This method does internal
-    /// buffering, so `rd` can supply TLS messages in arbitrary-
-    /// sized chunks (like a socket or pipe might).
-    pub(crate) fn read_tls(&mut self, rd: &mut dyn io::Read) -> io::Result<usize> {
-        self.message_deframer.read(rd)
-    }
-
     pub(crate) fn write_tls(&mut self, wr: &mut dyn io::Write) -> io::Result<usize> {
         self.sendable_tls.write_to(wr)
-    }
-
-    /// Send plaintext application data, fragmenting and
-    /// encrypting it as it goes out.
-    ///
-    /// If internal buffers are too small, this function will not accept
-    /// all the data.
-    pub(crate) fn send_some_plaintext(&mut self, data: &[u8]) -> usize {
-        self.send_plain(data, Limit::Yes)
-    }
-
-    pub(crate) fn send_early_plaintext(&mut self, data: &[u8]) -> usize {
-        debug_assert!(self.early_traffic);
-        debug_assert!(self.record_layer.is_encrypting());
-
-        if data.is_empty() {
-            // Don't send empty fragments.
-            return 0;
-        }
-
-        self.send_appdata_encrypt(data, Limit::Yes)
     }
 
     /// Encrypt and send some plaintext `data`.  `limit` controls
@@ -1063,21 +1133,6 @@ impl ConnectionCommon {
         self.received_plaintext.append(bytes.0);
     }
 
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let len = self.received_plaintext.read(buf)?;
-
-        if len == 0 && !buf.is_empty() {
-            // no bytes available:
-            // - if we received a close_notify, this is a genuine permanent EOF
-            // - otherwise say EWOULDBLOCK
-            if !self.connection_at_eof() {
-                return Err(io::ErrorKind::WouldBlock.into());
-            }
-        }
-
-        Ok(len)
-    }
-
     pub(crate) fn start_encryption_tls12(&mut self, secrets: &ConnectionSecrets) {
         let (dec, enc) = cipher::new_tls12(secrets);
         self.record_layer
@@ -1132,7 +1187,7 @@ pub(crate) trait HandleState: Sized {
         self,
         message: Message,
         data: &mut Self::Data,
-        common: &mut ConnectionCommon,
+        common: &mut CommonState,
     ) -> Result<Self, Error>;
 }
 

@@ -1,5 +1,7 @@
 use crate::builder::{ConfigBuilder, WantsCipherSuites};
-use crate::conn::{Connection, ConnectionCommon, IoState, PlaintextSink, Reader, Writer};
+use crate::conn::{
+    CommonState, Connection, ConnectionCommon, IoState, PlaintextSink, Reader, Writer,
+};
 use crate::error::Error;
 use crate::key;
 use crate::keylog::KeyLog;
@@ -261,7 +263,7 @@ impl ServerConnection {
         extra_exts: Vec<ServerExtension>,
     ) -> Result<Self, Error> {
         Ok(Self {
-            common: ConnectionCommon::new(config.max_fragment_size, false)?,
+            common: ConnectionCommon::new(CommonState::new(config.max_fragment_size, false)?),
             state: Some(Box::new(hs::ExpectClientHello::new(config, extra_exts))),
             data: ServerConnectionData::default(),
         })
@@ -328,7 +330,7 @@ impl ServerConnection {
     fn send_some_plaintext(&mut self, buf: &[u8]) -> usize {
         let mut st = self.state.take();
         if let Some(st) = st.as_mut() {
-            st.perhaps_write_key_update(&mut self.common);
+            st.perhaps_write_key_update(&mut self.common.common_state);
         }
         self.state = st;
         self.common.send_some_plaintext(buf)
@@ -342,7 +344,7 @@ impl Connection for ServerConnection {
 
     /// Writes TLS messages to `wr`.
     fn write_tls(&mut self, wr: &mut dyn io::Write) -> io::Result<usize> {
-        self.common.write_tls(wr)
+        self.common.common_state.write_tls(wr)
     }
 
     fn process_new_packets(&mut self) -> Result<IoState, Error> {
@@ -355,11 +357,15 @@ impl Connection for ServerConnection {
     }
 
     fn wants_write(&self) -> bool {
-        !self.common.sendable_tls.is_empty()
+        !self
+            .common
+            .common_state
+            .sendable_tls
+            .is_empty()
     }
 
     fn is_handshaking(&self) -> bool {
-        !self.common.traffic
+        !self.common.common_state.traffic
     }
 
     fn set_buffer_limit(&mut self, len: Option<usize>) {
@@ -367,7 +373,9 @@ impl Connection for ServerConnection {
     }
 
     fn send_close_notify(&mut self) {
-        self.common.send_close_notify()
+        self.common
+            .common_state
+            .send_close_notify()
     }
 
     fn peer_certificates(&self) -> Option<&[key::Certificate]> {
@@ -379,7 +387,9 @@ impl Connection for ServerConnection {
     }
 
     fn protocol_version(&self) -> Option<ProtocolVersion> {
-        self.common.negotiated_version
+        self.common
+            .common_state
+            .negotiated_version
     }
 
     fn export_keying_material(
@@ -395,7 +405,7 @@ impl Connection for ServerConnection {
     }
 
     fn negotiated_cipher_suite(&self) -> Option<SupportedCipherSuite> {
-        self.common.get_suite()
+        self.common.common_state.get_suite()
     }
 
     fn writer(&mut self) -> Writer {
@@ -460,6 +470,7 @@ impl ServerConnectionData {
 impl quic::QuicExt for ServerConnection {
     fn quic_transport_parameters(&self) -> Option<&[u8]> {
         self.common
+            .common_state
             .quic
             .params
             .as_ref()
@@ -469,9 +480,14 @@ impl quic::QuicExt for ServerConnection {
     fn zero_rtt_keys(&self) -> Option<quic::DirectionalKeys> {
         Some(quic::DirectionalKeys::new(
             self.common
+                .common_state
                 .get_suite()
                 .and_then(|suite| suite.tls13())?,
-            self.common.quic.early_secret.as_ref()?,
+            self.common
+                .common_state
+                .quic
+                .early_secret
+                .as_ref()?,
         ))
     }
 
@@ -482,15 +498,15 @@ impl quic::QuicExt for ServerConnection {
     }
 
     fn write_hs(&mut self, buf: &mut Vec<u8>) -> Option<quic::Keys> {
-        quic::write_hs(&mut self.common, buf)
+        quic::write_hs(&mut self.common.common_state, buf)
     }
 
     fn alert(&self) -> Option<AlertDescription> {
-        self.common.quic.alert
+        self.common.common_state.quic.alert
     }
 
     fn next_1rtt_keys(&mut self) -> Option<quic::PacketKeySet> {
-        quic::next_1rtt_keys(&mut self.common)
+        quic::next_1rtt_keys(&mut self.common.common_state)
     }
 }
 
@@ -522,7 +538,7 @@ pub trait ServerQuicExt {
             quic::Version::V1 => ServerExtension::TransportParameters(params),
         };
         let mut new = ServerConnection::from_config(config, vec![ext])?;
-        new.common.protocol = Protocol::Quic;
+        new.common.common_state.protocol = Protocol::Quic;
         Ok(new)
     }
 }
