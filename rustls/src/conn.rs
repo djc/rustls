@@ -697,9 +697,9 @@ impl<Data> ConnectionCommon<Data> {
         Ok(Some(MessageType::Data(msg)))
     }
 
-    pub(crate) fn process_new_packets<S: HandleState<Data>>(
+    pub(crate) fn process_new_packets(
         &mut self,
-        state: &mut Option<S>,
+        state: &mut Option<Box<dyn State<Data>>>,
     ) -> Result<IoState, Error> {
         if let Some(ref err) = self.error {
             return Err(err.clone());
@@ -729,9 +729,9 @@ impl<Data> ConnectionCommon<Data> {
         Ok(self.current_io_state())
     }
 
-    pub(crate) fn process_new_handshake_messages<S: HandleState<Data>>(
+    pub(crate) fn process_new_handshake_messages(
         &mut self,
-        state: &mut Option<S>,
+        state: &mut Option<Box<dyn State<Data>>>,
     ) -> Result<(), Error> {
         self.common_state.aligned_handshake = self.handshake_joiner.is_empty();
         while let Some(msg) = self.handshake_joiner.frames.pop_front() {
@@ -899,10 +899,10 @@ impl<Data> CommonState<Data> {
     /// Process `msg`.  First, we get the current state.  Then we ask what messages
     /// that state expects, enforced via `check_message`.  Finally, we ask the handler
     /// to handle the message.
-    fn process_main_protocol<S: HandleState<Data>>(
+    fn process_main_protocol(
         &mut self,
         msg: Message,
-        state: &mut Option<S>,
+        state: &mut Option<Box<dyn State<Data>>>,
     ) -> Result<(), Error> {
         // For TLS1.2, outside of the handshake, send rejection alerts for
         // renegotiation requests.  These can occur any time.
@@ -1171,8 +1171,23 @@ impl<Data> CommonState<Data> {
     }
 }
 
-pub(crate) trait HandleState<Data>: Sized {
-    fn handle(self, common: &mut CommonState<Data>, message: Message) -> Result<Self, Error>;
+pub(crate) trait State<Data>: Send + Sync {
+    fn handle(
+        self: Box<Self>,
+        common: &mut CommonState<Data>,
+        message: Message,
+    ) -> Result<Box<dyn State<Data>>, Error>;
+
+    fn export_keying_material(
+        &self,
+        _output: &mut [u8],
+        _label: &[u8],
+        _context: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        Err(Error::HandshakeNotComplete)
+    }
+
+    fn perhaps_write_key_update(&mut self, _common: &mut CommonState<Data>) {}
 }
 
 enum MessageType {

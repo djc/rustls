@@ -1,4 +1,4 @@
-use crate::conn::{CommonState, ConnectionRandoms};
+use crate::conn::{CommonState, ConnectionRandoms, State};
 use crate::error::Error;
 use crate::hash_hs::{HandshakeHash, HandshakeHashBuffer};
 #[cfg(feature = "logging")]
@@ -21,30 +21,9 @@ use crate::server::{tls12, tls13, ServerConnectionData};
 
 use std::sync::Arc;
 
-pub(super) type NextState = Box<dyn State>;
+pub(super) type NextState = Box<dyn State<ServerConnectionData>>;
 pub(super) type NextStateOrError = Result<NextState, Error>;
 pub(super) type ServerCommon = CommonState<ServerConnectionData>;
-
-pub(super) trait State: Send + Sync {
-    fn handle(self: Box<Self>, common: &mut ServerCommon, m: Message) -> NextStateOrError;
-
-    fn export_keying_material(
-        &self,
-        _output: &mut [u8],
-        _label: &[u8],
-        _context: Option<&[u8]>,
-    ) -> Result<(), Error> {
-        Err(Error::HandshakeNotComplete)
-    }
-
-    fn perhaps_write_key_update(&mut self, _common: &mut ServerCommon) {}
-}
-
-impl<'a> crate::conn::HandleState<ServerConnectionData> for Box<dyn State> {
-    fn handle(self, common: &mut ServerCommon, message: Message) -> Result<Self, Error> {
-        self.handle(common, message)
-    }
-}
 
 pub(super) fn incompatible(common: &mut ServerCommon, why: &str) -> Error {
     common.send_fatal_alert(AlertDescription::HandshakeFailure);
@@ -280,7 +259,7 @@ impl ExpectClientHello {
     }
 }
 
-impl State for ExpectClientHello {
+impl State<ServerConnectionData> for ExpectClientHello {
     fn handle(self: Box<Self>, common: &mut ServerCommon, m: Message) -> NextStateOrError {
         let client_hello =
             require_handshake_msg!(m, HandshakeType::ClientHello, HandshakePayload::ClientHello)?;

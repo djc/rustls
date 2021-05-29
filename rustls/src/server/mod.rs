@@ -1,6 +1,6 @@
 use crate::builder::{ConfigBuilder, WantsCipherSuites};
 use crate::conn::{
-    CommonState, Connection, ConnectionCommon, IoState, PlaintextSink, Reader, Writer,
+    CommonState, Connection, ConnectionCommon, IoState, PlaintextSink, Reader, State, Writer,
 };
 use crate::error::Error;
 use crate::key;
@@ -247,7 +247,7 @@ impl ServerConfig {
 /// Read data from the peer using the `io::Read` trait implementation.
 pub struct ServerConnection {
     common: ConnectionCommon<ServerConnectionData>,
-    state: Option<Box<dyn hs::State>>,
+    state: Option<Box<dyn State<ServerConnectionData>>>,
 }
 
 impl ServerConnection {
