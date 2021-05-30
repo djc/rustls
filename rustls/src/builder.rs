@@ -65,9 +65,7 @@ impl ConfigBuilder {
     }
 
     /// Choose a specific set of cipher suites.
-    pub fn with_cipher_suites(
-        cipher_suites: &[&'static SupportedCipherSuite],
-    ) -> ConfigBuilderWithSuites {
+    pub fn with_cipher_suites(cipher_suites: &[SupportedCipherSuite]) -> ConfigBuilderWithSuites {
         ConfigBuilderWithSuites {
             cipher_suites: cipher_suites.to_vec(),
         }
@@ -85,7 +83,7 @@ impl ConfigBuilder {
 
 /// A [`ConfigBuilder`] where we know the cipher suites.
 pub struct ConfigBuilderWithSuites {
-    cipher_suites: Vec<&'static SupportedCipherSuite>,
+    cipher_suites: Vec<SupportedCipherSuite>,
 }
 
 impl ConfigBuilderWithSuites {
@@ -111,7 +109,7 @@ impl ConfigBuilderWithSuites {
 /// A [`ConfigBuilder`] where we know the cipher suites and key exchange
 /// groups.
 pub struct ConfigBuilderWithKxGroups {
-    cipher_suites: Vec<&'static SupportedCipherSuite>,
+    cipher_suites: Vec<SupportedCipherSuite>,
     kx_groups: Vec<&'static SupportedKxGroup>,
 }
 
@@ -137,7 +135,7 @@ impl ConfigBuilderWithKxGroups {
 /// A [`ConfigBuilder`] where we know the cipher suites, key exchange groups,
 /// and protocol versions.
 pub struct ConfigBuilderWithVersions {
-    cipher_suites: Vec<&'static SupportedCipherSuite>,
+    cipher_suites: Vec<SupportedCipherSuite>,
     kx_groups: Vec<&'static SupportedKxGroup>,
     versions: versions::EnabledVersions,
 }

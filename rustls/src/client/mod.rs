@@ -85,7 +85,7 @@ pub trait ResolvesClientCert: Send + Sync {
 #[derive(Clone)]
 pub struct ClientConfig {
     /// List of ciphersuites, in preference order.
-    pub cipher_suites: Vec<&'static SupportedCipherSuite>,
+    pub cipher_suites: Vec<SupportedCipherSuite>,
 
     /// List of supported key exchange algorithms, in preference order -- the
     /// first element is the highest priority.
@@ -164,11 +164,11 @@ impl ClientConfig {
         danger::DangerousClientConfig { cfg: self }
     }
 
-    fn find_cipher_suite(&self, suite: CipherSuite) -> Option<&'static SupportedCipherSuite> {
+    fn find_cipher_suite(&self, suite: CipherSuite) -> Option<SupportedCipherSuite> {
         self.cipher_suites
             .iter()
             .copied()
-            .find(|&scs| scs.suite == suite)
+            .find(|&scs| scs.suite() == suite)
     }
 }
 
@@ -480,7 +480,7 @@ impl Connection for ClientConnection {
             .and_then(|st| st.export_keying_material(output, label, context))
     }
 
-    fn negotiated_cipher_suite(&self) -> Option<&'static SupportedCipherSuite> {
+    fn negotiated_cipher_suite(&self) -> Option<SupportedCipherSuite> {
         self.common
             .get_suite()
             .or(self.data.resumption_ciphersuite)
@@ -516,7 +516,7 @@ impl PlaintextSink for ClientConnection {
 struct ClientConnectionData {
     server_cert_chain: CertificatePayload,
     early_data: EarlyData,
-    resumption_ciphersuite: Option<&'static SupportedCipherSuite>,
+    resumption_ciphersuite: Option<SupportedCipherSuite>,
 }
 
 impl ClientConnectionData {
@@ -541,7 +541,9 @@ impl quic::QuicExt for ClientConnection {
 
     fn zero_rtt_keys(&self) -> Option<quic::DirectionalKeys> {
         Some(quic::DirectionalKeys::new(
-            self.data.resumption_ciphersuite?,
+            self.data
+                .resumption_ciphersuite
+                .and_then(|suite| suite.tls13())?,
             self.common.quic.early_secret.as_ref()?,
         ))
     }
