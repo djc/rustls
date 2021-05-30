@@ -82,7 +82,7 @@ pub fn new_tls12(secrets: &ConnectionSecrets) -> MessageCipherPair {
     }
 
     // Make a key block, and chop it up.
-    // nb. we don't implement any ciphersuites with nonzero mac_key_len.
+    // nb. we don't implement any cipher suites with nonzero mac_key_len.
     let key_block = secrets.make_key_block();
 
     let suite = secrets.suite();
@@ -110,8 +110,12 @@ pub fn new_tls12(secrets: &ConnectionSecrets) -> MessageCipherPair {
     };
 
     (
-        suite.aead_alg.decrypter(read_key, read_iv),
-        suite.aead_alg.encrypter(write_key, write_iv, extra),
+        suite
+            .aead_alg
+            .decrypter(read_key, read_iv),
+        suite
+            .aead_alg
+            .encrypter(write_key, write_iv, extra),
     )
 }
 
@@ -122,7 +126,12 @@ impl Tls12AeadAlgorithm for AesGcm {
         Box::new(GcmMessageDecrypter::new(key, iv))
     }
 
-    fn encrypter(&self, key: aead::LessSafeKey, iv: &[u8], extra: &[u8]) -> Box<dyn MessageEncrypter> {
+    fn encrypter(
+        &self,
+        key: aead::LessSafeKey,
+        iv: &[u8],
+        extra: &[u8],
+    ) -> Box<dyn MessageEncrypter> {
         let nonce = make_tls12_gcm_nonce(iv, extra);
         Box::new(GcmMessageEncrypter::new(key, nonce))
     }
@@ -142,7 +151,12 @@ impl Tls12AeadAlgorithm for ChaCha20Poly1305 {
 
 pub(crate) trait Tls12AeadAlgorithm: Send + Sync + 'static {
     fn decrypter(&self, key: aead::LessSafeKey, iv: &[u8]) -> Box<dyn MessageDecrypter>;
-    fn encrypter(&self, key: aead::LessSafeKey, iv: &[u8], extra: &[u8]) -> Box<dyn MessageEncrypter>;
+    fn encrypter(
+        &self,
+        key: aead::LessSafeKey,
+        iv: &[u8],
+        extra: &[u8],
+    ) -> Box<dyn MessageEncrypter>;
 }
 
 pub fn new_tls13_read(
@@ -165,13 +179,13 @@ pub fn new_tls13_write(
     Box::new(Tls13MessageEncrypter::new(key, iv))
 }
 
-/// A `MessageEncrypter` for AES-GCM AEAD ciphersuites. TLS 1.2 only.
+/// A `MessageEncrypter` for AES-GCM AEAD cipher suites. TLS 1.2 only.
 pub struct GcmMessageEncrypter {
     enc_key: aead::LessSafeKey,
     iv: Iv,
 }
 
-/// A `MessageDecrypter` for AES-GCM AEAD ciphersuites.  TLS1.2 only.
+/// A `MessageDecrypter` for AES-GCM AEAD cipher suites.  TLS1.2 only.
 pub struct GcmMessageDecrypter {
     dec_key: aead::LessSafeKey,
     dec_salt: [u8; 4],

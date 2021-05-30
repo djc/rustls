@@ -153,7 +153,7 @@ impl<'a> ClientHello<'a> {
 /// Create one of these via `ServerConfigBuilder`.
 #[derive(Clone)]
 pub struct ServerConfig {
-    /// List of ciphersuites, in preference order.
+    /// List of cipher suites, in preference order.
     pub cipher_suites: Vec<SupportedCipherSuite>,
 
     /// List of supported key exchange groups.

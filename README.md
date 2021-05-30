@@ -35,17 +35,18 @@ If you'd like to help out, please see [CONTRIBUTING.md](CONTRIBUTING.md).
     - `rustls::TLSError` to `rustls::Error`.
     - `rustls::ResolvesServerCertUsingSNI` to `rustls::ResolvesServerCertUsingSni`.
     - `rustls::WebPKIVerifier` to `rustls::WebPkiVerifier`.
-    - `rustls::ciphersuites` to `rustls::cipher_suites`.
+    - `rustls::cipher suites` to `rustls::cipher_suites`.
     - `rustls::ClientHello::sigschemes` to `rustls::ClientHello::signature_schemes`.
     - `rustls::RootCertStore::get_subjects` to `rustls::RootCertStore::subjects`.
     - `rustls::ServerSession` to `rustls::ServerConnection`.
     - `rustls::ClientSession` to `rustls::ClientConnection`.
     - `rustls::ServerSession::get_sni_hostname` to `rustls::ServerConnection::sni_hostname`.
-    - `rustls::ClientConfig::ciphersuites` to `rustls::ClientConfig::cipher_suites`.
-    - `rustls::ServerConfig::ciphersuites` to `rustls::ServerConfig::cipher_suites`.
+    - `rustls::ClientConfig::cipher suites` to `rustls::ClientConfig::cipher_suites`.
+    - `rustls::ServerConfig::cipher suites` to `rustls::ServerConfig::cipher_suites`.
     - `rustls::ProducesTickets::get_lifetime` to `rustls::ProducesTickets::lifetime`.
     - `rustls::Session`: `get_peer_certificates` to `peer_certificates`, `get_alpn_protocol` to `alpn_protocol`,
       `get_protocol_version` to `protocol_version`, `get_negotiated_ciphersuite` to `negotiated_cipher_suite`.
+    - `DEFAULT_CIPHERSUITES` to `DEFAULT_CIPHER_SUITES`, `ALL_CIPHERSUITES` to `ALL_CIPHER_SUITES`.
   - *Breaking API change*: `ResolvesServerCert::resolve` and `ResolvesClientCert::resolve` now return
     `Option<Arc<CertifiedKey>>` instead of `Option<CertifiedKey>`.  `CertifiedKey` is now an immutable
     type.
@@ -76,8 +77,8 @@ If you'd like to help out, please see [CONTRIBUTING.md](CONTRIBUTING.md).
   - *Breaking API change*: The writev_tls API has been removed, in favour
     of using vectored IO support now offered by std::io::Write.
   - Added ed25519 support for authentication; thanks to @potatosalad.
-  - Support removal of unused ciphersuites at link-time.  To use this,
-    call `ClientConfig::with_ciphersuites` instead of `ClientConfig::new`.
+  - Support removal of unused cipher suites at link-time.  To use this,
+    call `ClientConfig::with_cipher suites` instead of `ClientConfig::new`.
 
 See [OLDCHANGES.md](OLDCHANGES.md) for further change history.
 
@@ -127,8 +128,8 @@ dangerous and/or insane. Rustls does not support:
 * SSL1, SSL2, SSL3, TLS1 or TLS1.1.
 * RC4.
 * DES or triple DES.
-* EXPORT ciphersuites.
-* MAC-then-encrypt ciphersuites.
+* EXPORT cipher suites.
+* MAC-then-encrypt cipher suites.
 * Ciphersuites without forward secrecy.
 * Renegotiation.
 * Kerberos.

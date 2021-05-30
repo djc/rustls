@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
 use crate::msgs::enums::ProtocolVersion;
 use crate::server::builder::ServerConfigBuilder;
-use crate::suites::{SupportedCipherSuite, DEFAULT_CIPHERSUITES};
+use crate::suites::{SupportedCipherSuite, DEFAULT_CIPHER_SUITES};
 use crate::versions;
 
 /// Building a [`ServerConfig`] or [`ClientConfig`] in a linker-friendly way.
@@ -77,7 +77,7 @@ impl ConfigBuilder {
     /// to filter out low-, export- or NULL-strength cipher suites: rustls does not
     /// implement these.
     pub fn with_safe_default_cipher_suites() -> ConfigBuilderWithSuites {
-        Self::with_cipher_suites(DEFAULT_CIPHERSUITES)
+        Self::with_cipher_suites(DEFAULT_CIPHER_SUITES)
     }
 }
 

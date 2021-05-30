@@ -84,7 +84,7 @@ pub trait ResolvesClientCert: Send + Sync {
 /// once per process rather than once per connection.
 #[derive(Clone)]
 pub struct ClientConfig {
-    /// List of ciphersuites, in preference order.
+    /// List of cipher suites, in preference order.
     pub cipher_suites: Vec<SupportedCipherSuite>,
 
     /// List of supported key exchange algorithms, in preference order -- the

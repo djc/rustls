@@ -24,7 +24,7 @@ use rustls::{CipherSuite, ProtocolVersion, SignatureScheme};
 use rustls::{ClientConfig, ClientConnection, ResolvesClientCert};
 use rustls::{ResolvesServerCert, ServerConfig, ServerConnection};
 use rustls::{Stream, StreamOwned};
-use rustls::{SupportedCipherSuite, ALL_CIPHERSUITES};
+use rustls::{SupportedCipherSuite, ALL_CIPHER_SUITES};
 
 #[cfg(feature = "dangerous_configuration")]
 use rustls::ClientCertVerified;
@@ -1891,7 +1891,7 @@ fn server_stream_handshake_error() {
         assert!(rc.is_err());
         assert_eq!(
             format!("{:?}", rc),
-            "Err(Custom { kind: InvalidData, error: PeerIncompatibleError(\"no ciphersuites in common\") })"
+            "Err(Custom { kind: InvalidData, error: PeerIncompatibleError(\"no cipher suites in common\") })"
         );
     }
 }
@@ -1910,7 +1910,7 @@ fn server_streamowned_handshake_error() {
     assert!(rc.is_err());
     assert_eq!(
         format!("{:?}", rc),
-        "Err(Custom { kind: InvalidData, error: PeerIncompatibleError(\"no ciphersuites in common\") })"
+        "Err(Custom { kind: InvalidData, error: PeerIncompatibleError(\"no cipher suites in common\") })"
     );
 }
 
@@ -2222,7 +2222,7 @@ fn do_suite_test(
 }
 
 fn find_suite(suite: CipherSuite) -> SupportedCipherSuite {
-    for scs in ALL_CIPHERSUITES.iter().copied() {
+    for scs in ALL_CIPHER_SUITES.iter().copied() {
         if scs.suite() == suite {
             return scs;
         }
@@ -2231,7 +2231,7 @@ fn find_suite(suite: CipherSuite) -> SupportedCipherSuite {
     panic!("find_suite given unsupported suite");
 }
 
-static TEST_CIPHERSUITES: [(
+static TEST_CIPHER_SUITES: [(
     &'static rustls::SupportedProtocolVersion,
     KeyType,
     CipherSuite,
@@ -2297,12 +2297,12 @@ fn negotiated_ciphersuite_default() {
 
 #[test]
 fn all_suites_covered() {
-    assert_eq!(ALL_CIPHERSUITES.len(), TEST_CIPHERSUITES.len());
+    assert_eq!(ALL_CIPHER_SUITES.len(), TEST_CIPHER_SUITES.len());
 }
 
 #[test]
 fn negotiated_ciphersuite_client() {
-    for item in TEST_CIPHERSUITES.iter() {
+    for item in TEST_CIPHER_SUITES.iter() {
         let (version, kt, suite) = *item;
         let scs = find_suite(suite);
         let mut client_config = make_client_config(kt);
@@ -2317,7 +2317,7 @@ fn negotiated_ciphersuite_client() {
 
 #[test]
 fn negotiated_ciphersuite_server() {
-    for item in TEST_CIPHERSUITES.iter() {
+    for item in TEST_CIPHER_SUITES.iter() {
         let (version, kt, suite) = *item;
         let scs = find_suite(suite);
         let mut server_config = make_server_config(kt);

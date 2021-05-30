@@ -362,7 +362,7 @@ fn lookup_ipv4(host: &str, port: u16) -> SocketAddr {
 
 /// Find a ciphersuite with the given name
 fn find_suite(name: &str) -> Option<rustls::SupportedCipherSuite> {
-    for suite in rustls::ALL_CIPHERSUITES {
+    for suite in rustls::ALL_CIPHER_SUITES {
         let sname = format!("{:?}", suite.suite()).to_lowercase();
 
         if sname == name.to_string().to_lowercase() {
@@ -373,7 +373,7 @@ fn find_suite(name: &str) -> Option<rustls::SupportedCipherSuite> {
     None
 }
 
-/// Make a vector of ciphersuites named in `suites`
+/// Make a vector of cipher suites named in `suites`
 fn lookup_suites(suites: &[String]) -> Vec<rustls::SupportedCipherSuite> {
     let mut out = Vec::new();
 
@@ -490,7 +490,7 @@ fn make_config(args: &Args) -> Arc<rustls::ClientConfig> {
     let suites = if !args.flag_suite.is_empty() {
         lookup_suites(&args.flag_suite)
     } else {
-        rustls::DEFAULT_CIPHERSUITES.to_vec()
+        rustls::DEFAULT_CIPHER_SUITES.to_vec()
     };
 
     let versions = if !args.flag_protover.is_empty() {

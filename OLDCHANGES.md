@@ -7,9 +7,9 @@
     takes a struct containing its arguments, so new data can be passed
     to these functions without further breaking changes.
   - Signature schemes offered by the client are now filtered to those
-    compatible with the client-offered ciphersuites.  Prior to this change
+    compatible with the client-offered cipher suites.  Prior to this change
     it was likely that server key type switching would not work for clients
-    that offer signature schemes mismatched with their ciphersuites.
+    that offer signature schemes mismatched with their cipher suites.
   - Add manual with goal-oriented documentation, and rationale for design
     decisions.
   - *Breaking API change*: `AlwaysResolvesClientCert::new` is now fallible,

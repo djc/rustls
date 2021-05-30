@@ -41,8 +41,8 @@
 //! * SSL1, SSL2, SSL3, TLS1 or TLS1.1.
 //! * RC4.
 //! * DES or triple DES.
-//! * EXPORT ciphersuites.
-//! * MAC-then-encrypt ciphersuites.
+//! * EXPORT cipher suites.
+//! * MAC-then-encrypt cipher suites.
 //! * Ciphersuites without forward secrecy.
 //! * Renegotiation.
 //! * Kerberos.
@@ -318,7 +318,7 @@ pub use crate::server::{ClientHello, ProducesTickets, ResolvesServerCert};
 pub use crate::server::{ServerConfig, ServerConnection};
 pub use crate::stream::{Stream, StreamOwned};
 pub use crate::suites::{
-    BulkAlgorithm, SupportedCipherSuite, ALL_CIPHERSUITES, DEFAULT_CIPHERSUITES,
+    BulkAlgorithm, SupportedCipherSuite, ALL_CIPHER_SUITES, DEFAULT_CIPHER_SUITES,
 };
 pub use crate::ticketer::Ticketer;
 pub use crate::verify::{
@@ -326,9 +326,9 @@ pub use crate::verify::{
 };
 pub use crate::versions::{SupportedProtocolVersion, ALL_VERSIONS, DEFAULT_VERSIONS};
 
-/// All defined ciphersuites appear in this module.
+/// All defined cipher suites appear in this module.
 ///
-/// ALL_CIPHERSUITES is provided as an array of all of these values.
+/// ALL_CIPHER_SUITES is provided as an array of all of these values.
 pub mod cipher_suite {
     pub use crate::suites::TLS13_AES_128_GCM_SHA256;
     pub use crate::suites::TLS13_AES_256_GCM_SHA384;

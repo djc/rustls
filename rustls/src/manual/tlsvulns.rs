@@ -1,6 +1,6 @@
 /*! # A review of protocol vulnerabilities
 
-## CBC MAC-then-encrypt ciphersuites
+## CBC MAC-then-encrypt cipher suites
 
 Back in 2000 [Bellare and Namprempre](https://eprint.iacr.org/2000/025) discussed how to make authenticated
 encryption by composing separate encryption and authentication primitives.  That paper included this table:
@@ -22,8 +22,8 @@ those written [after discovery](https://aws.amazon.com/blogs/security/s2n-and-lu
 [memory safety vulnerability in the fix for Lucky 13](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2016-2107), which
 gives a flavour of the kind of complexity required to remove the side channel.
 
-rustls does not implement CBC MAC-then-encrypt ciphersuites for these reasons.  TLSv1.3 removed support for these
-ciphersuites in 2018.
+rustls does not implement CBC MAC-then-encrypt cipher suites for these reasons.  TLSv1.3 removed support for these
+cipher suites in 2018.
 
 There are some further rejected options worth mentioning: [RFC7366](https://tools.ietf.org/html/rfc7366) defines
 Encrypt-then-MAC for TLS, but unfortunately cannot be negotiated without also supporting MAC-then-encrypt
@@ -51,7 +51,7 @@ rustls does not support RSA key exchange.  TLSv1.3 also removed support.
 
 [BEAST](https://vnhacker.blogspot.com/2011/09/beast.html) ([CVE-2011-3389](https://nvd.nist.gov/vuln/detail/CVE-2011-3389))
 was demonstrated in 2011 by Thai Duong and Juliano Rizzo,
-and was another vulnerability in CBC-based ciphersuites in SSLv3.0 and TLSv1.0.  CBC mode is vulnerable to adaptive
+and was another vulnerability in CBC-based cipher suites in SSLv3.0 and TLSv1.0.  CBC mode is vulnerable to adaptive
 chosen-plaintext attacks if the IV is predictable.  In the case of these protocol versions, the IV was the previous
 block of ciphertext (as if the entire TLS session was one CBC ciphertext, albeit revealed incrementally).  This was
 obviously predictable, since it was published on the wire.
@@ -61,7 +61,7 @@ one, so that the IV used in the real message is unpredictable.  This was turned 
 
 TLSv1.1 fix this vulnerability, but not any of the other deficiencies of CBC mode (see above).
 
-rustls does not support these ciphersuites.
+rustls does not support these cipher suites.
 
 ## CRIME
 
@@ -79,18 +79,18 @@ rustls does not implement compression.  TLSv1.3 also removed support.
 ## Logjam / FREAK
 
 Way back when SSL was first being born, circa 1995, the US government considered cryptography a munition requiring
-export control.  SSL contained specific ciphersuites with dramatically small key sizes that were not subject
+export control.  SSL contained specific cipher suites with dramatically small key sizes that were not subject
 to export control.  These controls were dropped in 2000.
 
-Since the "export-grade" ciphersuites no longer fulfilled any purpose, and because they were actively harmful to users,
+Since the "export-grade" cipher suites no longer fulfilled any purpose, and because they were actively harmful to users,
 one may have expected software support to disappear quickly. This did not happen.
 
 In 2015 [the FREAK attack](https://mitls.org/pages/attacks/SMACK#freak) ([CVE-2015-0204](https://nvd.nist.gov/vuln/detail/CVE-2015-0204))
 and [the Logjam attack](https://weakdh.org/) ([CVE-2015-4000](https://nvd.nist.gov/vuln/detail/CVE-2015-4000)) both
-demonstrated total breaks of security in the presence of servers that accepted export ciphersuites.  FREAK factored
+demonstrated total breaks of security in the presence of servers that accepted export cipher suites.  FREAK factored
 512-bit RSA keys, while Logjam optimised solving discrete logs in the 512-bit group used by many different servers.
 
-Naturally, rustls does not implement any of these ciphersuites.
+Naturally, rustls does not implement any of these cipher suites.
 
 ## SWEET32
 
@@ -115,15 +115,15 @@ rustls naturally does not support SSLv2, but most importantly does not support R
 ## Poodle
 
 [POODLE](https://www.openssl.org/~bodo/ssl-poodle.pdf) ([CVE-2014-3566](https://nvd.nist.gov/vuln/detail/CVE-2014-3566))
-is an attack against CBC mode ciphersuites in SSLv3.  This was possible in most cases because some clients willingly
+is an attack against CBC mode cipher suites in SSLv3.  This was possible in most cases because some clients willingly
 downgraded to SSLv3 after failed handshakes for later versions.
 
-rustls does not support CBC mode ciphersuites, or SSLv3.  Note that rustls does not need to implement `TLS_FALLBACK_SCSV`
+rustls does not support CBC mode cipher suites, or SSLv3.  Note that rustls does not need to implement `TLS_FALLBACK_SCSV`
 introduced as a countermeasure because it contains no ability to downgrade to earlier protocol versions.
 
 ## GCM nonces
 
-[RFC5288](https://tools.ietf.org/html/rfc5288) introduced GCM-based ciphersuites for use in TLS.  Unfortunately
+[RFC5288](https://tools.ietf.org/html/rfc5288) introduced GCM-based cipher suites for use in TLS.  Unfortunately
 the design was poor; it reused design for an unrelated security setting proposed in RFC5116.
 
 GCM is a typical nonce-based AEAD: it requires a unique (but not necessarily unpredictable) 96-bit nonce for each encryption
@@ -163,11 +163,11 @@ TLSv1.3 no longer supports renegotiation and RSA key exchange.  It also effectiv
 
 ## KCI
 
-[This vulnerability](https://kcitls.org/) makes use of TLS ciphersuites (those offering static DH) which were standardised
+[This vulnerability](https://kcitls.org/) makes use of TLS cipher suites (those offering static DH) which were standardised
 yet not widely used. However, they were implemented by libraries, and as a result enabled for various clients.  It coupled
 this with misconfigured certificates (on services including facebook.com) which allowed their misuse to MitM connections.
 
-rustls does not support static DH/EC-DH ciphersuites.  We assert that it is misissuance to sign an EC certificate
+rustls does not support static DH/EC-DH cipher suites.  We assert that it is misissuance to sign an EC certificate
 with the keyUsage extension allowing both signatures and key exchange.  That it isn't is probably a failure
 of CAB Forum baseline requirements.
 */

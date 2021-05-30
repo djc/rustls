@@ -38,8 +38,8 @@ and will not support:
 * SSL1, SSL2, SSL3, TLS1 or TLS1.1.
 * RC4.
 * DES or triple DES.
-* EXPORT ciphersuites.
-* MAC-then-encrypt ciphersuites.
+* EXPORT cipher suites.
+* MAC-then-encrypt cipher suites.
 * Ciphersuites without forward secrecy.
 * Renegotiation.
 * Kerberos.

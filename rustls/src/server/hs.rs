@@ -413,9 +413,9 @@ impl State for ExpectClientHello {
 
         // We communicate to the upper layer what kind of key they should choose
         // via the sigschemes value.  Clients tend to treat this extension
-        // orthogonally to offered ciphersuites (even though, in TLS1.2 it is not).
+        // orthogonally to offered cipher suites (even though, in TLS1.2 it is not).
         // So: reduce the offered sigschemes to those compatible with the
-        // intersection of ciphersuites.
+        // intersection of cipher suites.
         let mut common_suites = self.config.cipher_suites.clone();
         common_suites.retain(|scs| {
             client_hello
@@ -458,7 +458,7 @@ impl State for ExpectClientHello {
         };
         let certkey = ActiveCertifiedKey::from_certified_key(&certkey);
 
-        // Reduce our supported ciphersuites by the certificate.
+        // Reduce our supported cipher suites by the certificate.
         // (no-op for TLS1.3)
         let suitable_suites =
             suites::reduce_given_sigalg(&self.config.cipher_suites, certkey.get_key().algorithm());
@@ -477,7 +477,7 @@ impl State for ExpectClientHello {
                 &suitable_suites,
             )
         }
-        .ok_or_else(|| incompatible(&mut cx.common, "no ciphersuites in common"))?;
+        .ok_or_else(|| incompatible(&mut cx.common, "no cipher suites in common"))?;
 
         debug!("decided upon suite {:?}", suite);
         cx.common.suite = Some(suite);
