@@ -81,7 +81,9 @@ impl PartialEq for Tls13CipherSuite {
     }
 }
 
-pub(crate) struct Tls12Parameters {
+pub struct Tls12CipherSuite {
+    pub common: CipherSuiteCommon,
+    pub(crate) hmac_algorithm: ring::hmac::Algorithm,
     /// How to exchange/agree keys.
     pub kx: KeyExchangeAlgorithm,
 
@@ -100,13 +102,7 @@ pub(crate) struct Tls12Parameters {
     /// chacha20poly1305 works this way by design.
     pub explicit_nonce_len: usize,
 
-    pub aead_alg: &'static dyn Tls12AeadAlgorithm,
-}
-
-pub struct Tls12CipherSuite {
-    pub common: CipherSuiteCommon,
-    pub(crate) params: Tls12Parameters,
-    pub(crate) hmac_algorithm: ring::hmac::Algorithm,
+    pub(crate) aead_alg: &'static dyn Tls12AeadAlgorithm,
 }
 
 impl Tls12CipherSuite {
@@ -114,8 +110,7 @@ impl Tls12CipherSuite {
     /// offered `SupportedSignatureSchemes`.  If we return an empty
     /// set, the handshake terminates.
     pub fn resolve_sig_schemes(&self, offered: &[SignatureScheme]) -> Vec<SignatureScheme> {
-        self.params
-            .sign
+        self.sign
             .iter()
             .filter(|pref| offered.contains(pref))
             .cloned()
@@ -194,7 +189,6 @@ impl SupportedCipherSuite {
         match self {
             SupportedCipherSuite::Tls13(_) => true, // no constraint expressed by ciphersuite (e.g., TLS1.3)
             &SupportedCipherSuite::Tls12(inner) => inner
-                .params
                 .sign
                 .iter()
                 .any(|scheme| scheme.sign() == sigalg),
@@ -225,14 +219,12 @@ pub static TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &T
         bulk: BulkAlgorithm::Chacha20Poly1305,
         aead_algorithm: &ring::aead::CHACHA20_POLY1305,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_ECDSA_SCHEMES,
-        fixed_iv_len: 12,
-        explicit_nonce_len: 0,
-        aead_alg: &cipher::ChaCha20Poly1305,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_ECDSA_SCHEMES,
+    fixed_iv_len: 12,
+    explicit_nonce_len: 0,
+    aead_alg: &cipher::ChaCha20Poly1305,
 };
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
@@ -242,14 +234,12 @@ pub static TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &Tls
         bulk: BulkAlgorithm::Chacha20Poly1305,
         aead_algorithm: &ring::aead::CHACHA20_POLY1305,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_RSA_SCHEMES,
-        fixed_iv_len: 12,
-        explicit_nonce_len: 0,
-        aead_alg: &cipher::ChaCha20Poly1305,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_RSA_SCHEMES,
+    fixed_iv_len: 12,
+    explicit_nonce_len: 0,
+    aead_alg: &cipher::ChaCha20Poly1305,
 };
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
@@ -259,14 +249,12 @@ pub static TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: &Tls12CipherSuite = &Tls12Ciph
         bulk: BulkAlgorithm::Aes128Gcm,
         aead_algorithm: &ring::aead::AES_128_GCM,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_RSA_SCHEMES,
-        fixed_iv_len: 4,
-        explicit_nonce_len: 8,
-        aead_alg: &cipher::AesGcm,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_RSA_SCHEMES,
+    fixed_iv_len: 4,
+    explicit_nonce_len: 8,
+    aead_alg: &cipher::AesGcm,
 };
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
@@ -276,14 +264,12 @@ pub static TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: &Tls12CipherSuite = &Tls12Ciph
         bulk: BulkAlgorithm::Aes256Gcm,
         aead_algorithm: &ring::aead::AES_256_GCM,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_RSA_SCHEMES,
-        fixed_iv_len: 4,
-        explicit_nonce_len: 8,
-        aead_alg: &cipher::AesGcm,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_RSA_SCHEMES,
+    fixed_iv_len: 4,
+    explicit_nonce_len: 8,
+    aead_alg: &cipher::AesGcm,
 };
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
@@ -293,14 +279,12 @@ pub static TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: &Tls12CipherSuite = &Tls12Ci
         bulk: BulkAlgorithm::Aes128Gcm,
         aead_algorithm: &ring::aead::AES_128_GCM,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_ECDSA_SCHEMES,
-        fixed_iv_len: 4,
-        explicit_nonce_len: 8,
-        aead_alg: &cipher::AesGcm,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_ECDSA_SCHEMES,
+    fixed_iv_len: 4,
+    explicit_nonce_len: 8,
+    aead_alg: &cipher::AesGcm,
 };
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
@@ -310,14 +294,12 @@ pub static TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: &Tls12CipherSuite = &Tls12Ci
         bulk: BulkAlgorithm::Aes256Gcm,
         aead_algorithm: &ring::aead::AES_256_GCM,
     },
-    params: Tls12Parameters {
-        kx: KeyExchangeAlgorithm::ECDHE,
-        sign: TLS12_ECDSA_SCHEMES,
-        fixed_iv_len: 4,
-        explicit_nonce_len: 8,
-        aead_alg: &cipher::AesGcm,
-    },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
+    kx: KeyExchangeAlgorithm::ECDHE,
+    sign: TLS12_ECDSA_SCHEMES,
+    fixed_iv_len: 4,
+    explicit_nonce_len: 8,
+    aead_alg: &cipher::AesGcm,
 };
 
 /// The TLS1.3 ciphersuite TLS_CHACHA20_POLY1305_SHA256
