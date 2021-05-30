@@ -1,4 +1,4 @@
-use crate::cipher;
+use crate::cipher::{self, Tls12AeadAlgorithm};
 use crate::msgs::enums::ProtocolVersion;
 use crate::msgs::enums::{CipherSuite, SignatureAlgorithm, SignatureScheme};
 use crate::msgs::handshake::DecomposedSignatureScheme;
@@ -100,8 +100,7 @@ pub(crate) struct Tls12Parameters {
     /// chacha20poly1305 works this way by design.
     pub explicit_nonce_len: usize,
 
-    pub build_tls12_encrypter: cipher::BuildTls12Encrypter,
-    pub build_tls12_decrypter: cipher::BuildTls12Decrypter,
+    pub aead_alg: &'static dyn Tls12AeadAlgorithm,
 }
 
 pub struct Tls12CipherSuite {
@@ -231,8 +230,7 @@ pub static TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &T
         sign: TLS12_ECDSA_SCHEMES,
         fixed_iv_len: 12,
         explicit_nonce_len: 0,
-        build_tls12_encrypter: cipher::build_tls12_chacha_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_chacha_decrypter,
+        aead_alg: &cipher::ChaCha20Poly1305,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
 };
@@ -249,8 +247,7 @@ pub static TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &Tls
         sign: TLS12_RSA_SCHEMES,
         fixed_iv_len: 12,
         explicit_nonce_len: 0,
-        build_tls12_encrypter: cipher::build_tls12_chacha_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_chacha_decrypter,
+        aead_alg: &cipher::ChaCha20Poly1305,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
 };
@@ -267,8 +264,7 @@ pub static TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: &Tls12CipherSuite = &Tls12Ciph
         sign: TLS12_RSA_SCHEMES,
         fixed_iv_len: 4,
         explicit_nonce_len: 8,
-        build_tls12_encrypter: cipher::build_tls12_gcm_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_gcm_decrypter,
+        aead_alg: &cipher::AesGcm,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
 };
@@ -285,8 +281,7 @@ pub static TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: &Tls12CipherSuite = &Tls12Ciph
         sign: TLS12_RSA_SCHEMES,
         fixed_iv_len: 4,
         explicit_nonce_len: 8,
-        build_tls12_encrypter: cipher::build_tls12_gcm_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_gcm_decrypter,
+        aead_alg: &cipher::AesGcm,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
 };
@@ -303,8 +298,7 @@ pub static TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: &Tls12CipherSuite = &Tls12Ci
         sign: TLS12_ECDSA_SCHEMES,
         fixed_iv_len: 4,
         explicit_nonce_len: 8,
-        build_tls12_encrypter: cipher::build_tls12_gcm_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_gcm_decrypter,
+        aead_alg: &cipher::AesGcm,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA256,
 };
@@ -321,8 +315,7 @@ pub static TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: &Tls12CipherSuite = &Tls12Ci
         sign: TLS12_ECDSA_SCHEMES,
         fixed_iv_len: 4,
         explicit_nonce_len: 8,
-        build_tls12_encrypter: cipher::build_tls12_gcm_encrypter,
-        build_tls12_decrypter: cipher::build_tls12_gcm_decrypter,
+        aead_alg: &cipher::AesGcm,
     },
     hmac_algorithm: ring::hmac::HMAC_SHA384,
 };
