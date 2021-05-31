@@ -416,7 +416,10 @@ impl State for ExpectClientHello {
         // orthogonally to offered cipher suites (even though, in TLS1.2 it is not).
         // So: reduce the offered sigschemes to those compatible with the
         // intersection of cipher suites.
-        let mut common_suites = self.config.cipher_suites.clone();
+        let mut common_suites = self
+            .config
+            .all_suites()
+            .collect::<Vec<_>>();
         common_suites.retain(|scs| {
             client_hello
                 .cipher_suites
@@ -461,7 +464,7 @@ impl State for ExpectClientHello {
         // Reduce our supported cipher suites by the certificate.
         // (no-op for TLS1.3)
         let suitable_suites =
-            suites::reduce_given_sigalg(&self.config.cipher_suites, certkey.get_key().algorithm());
+            suites::reduce_given_sigalg(self.config.all_suites(), certkey.get_key().algorithm());
 
         // And version
         let suitable_suites = suites::reduce_given_version(&suitable_suites, version);

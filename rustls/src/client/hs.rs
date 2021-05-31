@@ -90,7 +90,7 @@ fn find_session(
     let mut reader = Reader::init(&value[..]);
     let result = persist::ClientSessionValue::read(&mut reader).and_then(|csv| {
         let time = TimeBase::now().ok()?;
-        csv.resolve_cipher_suite(&config.cipher_suites, time)
+        csv.resolve_cipher_suite(config.all_suites(), time)
     });
     if let Some(result) = result {
         if result.has_expired() {
@@ -356,8 +356,7 @@ fn emit_client_hello_for_retry(
 
     let session_id = session_id.unwrap_or_else(SessionID::empty);
     let mut cipher_suites: Vec<_> = config
-        .cipher_suites
-        .iter()
+        .all_suites()
         .map(|cs| cs.suite())
         .collect();
     // We don't do renegotiation at all, in fact.

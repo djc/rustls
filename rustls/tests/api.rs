@@ -24,7 +24,8 @@ use rustls::{CipherSuite, ProtocolVersion, SignatureScheme};
 use rustls::{ClientConfig, ClientConnection, ResolvesClientCert};
 use rustls::{ResolvesServerCert, ServerConfig, ServerConnection};
 use rustls::{Stream, StreamOwned};
-use rustls::{SupportedCipherSuite, ALL_CIPHER_SUITES};
+use rustls::{SupportedCipherSuite, Tls12CipherSuite, Tls13CipherSuite};
+use rustls::{ALL_TLS12_CIPHER_SUITES, ALL_TLS13_CIPHER_SUITES};
 
 #[cfg(feature = "dangerous_configuration")]
 use rustls::ClientCertVerified;
@@ -99,15 +100,29 @@ fn version_test(
     );
 
     if !client_versions.is_empty() {
-        client_config
-            .versions
-            .replace(client_versions);
+        if !client_versions.contains(&&rustls::version::TLS13) {
+            client_config
+                .tls13_cipher_suites
+                .clear();
+        }
+        if !client_versions.contains(&&rustls::version::TLS12) {
+            client_config
+                .tls12_cipher_suites
+                .clear();
+        }
     }
 
     if !server_versions.is_empty() {
-        server_config
-            .versions
-            .replace(server_versions);
+        if !server_versions.contains(&&rustls::version::TLS13) {
+            server_config
+                .tls13_cipher_suites
+                .clear();
+        }
+        if !server_versions.contains(&&rustls::version::TLS12) {
+            server_config
+                .tls12_cipher_suites
+                .clear();
+        }
     }
 
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
@@ -175,7 +190,6 @@ fn config_builder_for_client_rejects_empty_kx_groups() {
     assert_eq!(
         ConfigBuilder::with_safe_default_cipher_suites()
             .with_kx_groups(&[])
-            .with_safe_default_protocol_versions()
             .for_client()
             .err(),
         Some(Error::General("no kx groups configured".into()))
@@ -185,21 +199,9 @@ fn config_builder_for_client_rejects_empty_kx_groups() {
 #[test]
 fn config_builder_for_client_rejects_empty_cipher_suites() {
     assert_eq!(
-        ConfigBuilder::with_cipher_suites(&[])
+        ConfigBuilder::with_tls13_cipher_suites(&[])
+            .with_tls12_cipher_suites(&[])
             .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()
-            .for_client()
-            .err(),
-        Some(Error::General("no usable cipher suites configured".into()))
-    );
-}
-
-#[test]
-fn config_builder_for_client_rejects_incompatible_cipher_suites() {
-    assert_eq!(
-        ConfigBuilder::with_cipher_suites(&[rustls::cipher_suite::TLS13_AES_256_GCM_SHA384.into()])
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS12])
             .for_client()
             .err(),
         Some(Error::General("no usable cipher suites configured".into()))
@@ -211,7 +213,6 @@ fn config_builder_for_server_rejects_empty_kx_groups() {
     assert_eq!(
         ConfigBuilder::with_safe_default_cipher_suites()
             .with_kx_groups(&[])
-            .with_safe_default_protocol_versions()
             .for_server()
             .err(),
         Some(Error::General("no kx groups configured".into()))
@@ -221,21 +222,9 @@ fn config_builder_for_server_rejects_empty_kx_groups() {
 #[test]
 fn config_builder_for_server_rejects_empty_cipher_suites() {
     assert_eq!(
-        ConfigBuilder::with_cipher_suites(&[])
+        ConfigBuilder::with_tls13_cipher_suites(&[])
+            .with_tls12_cipher_suites(&[])
             .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()
-            .for_server()
-            .err(),
-        Some(Error::General("no usable cipher suites configured".into()))
-    );
-}
-
-#[test]
-fn config_builder_for_server_rejects_incompatible_cipher_suites() {
-    assert_eq!(
-        ConfigBuilder::with_cipher_suites(&[rustls::cipher_suite::TLS13_AES_256_GCM_SHA384.into()])
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS12])
             .for_server()
             .err(),
         Some(Error::General("no usable cipher suites configured".into()))
@@ -582,7 +571,8 @@ fn check_sigalgs_reduced_by_ciphersuite(
     expected_sigalgs: Vec<SignatureScheme>,
 ) {
     let mut client_config = make_client_config(kt);
-    client_config.cipher_suites = vec![find_suite(suite)];
+    client_config.tls12_cipher_suites = vec![find_tls12_suite(suite)];
+    client_config.tls13_cipher_suites.clear();
 
     let mut server_config = make_server_config(kt);
 
@@ -937,7 +927,12 @@ mod test_clientverifier {
             let client_config = make_client_config(*kt);
 
             for client_config in AllClientVersions::new(client_config) {
-                println!("Failing: {:?}", client_config.versions);
+                println!(
+                    "Testing with {} 1.3 suites, {} 1.2 suites",
+                    client_config.tls13_cipher_suites.len(),
+                    client_config.tls12_cipher_suites.len()
+                );
+
                 let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
                 let mut client =
                     ClientConnection::new(Arc::new(client_config), dns_name("localhost")).unwrap();
@@ -1086,8 +1081,8 @@ mod test_serververifier {
                 .dangerous()
                 .set_certificate_verifier(verifier);
             client_config
-                .versions
-                .replace(&[&rustls::version::TLS12]);
+                .tls13_cipher_suites
+                .clear();
 
             let server_config = Arc::new(make_server_config(*kt));
 
@@ -1116,8 +1111,8 @@ mod test_serververifier {
                 .dangerous()
                 .set_certificate_verifier(verifier);
             client_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
+                .tls12_cipher_suites
+                .clear();
 
             let server_config = Arc::new(make_server_config(*kt));
 
@@ -1144,8 +1139,8 @@ mod test_serververifier {
                 .dangerous()
                 .set_certificate_verifier(verifier);
             client_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
+                .tls12_cipher_suites
+                .clear();
 
             let server_config = Arc::new(make_server_config(*kt));
 
@@ -1820,14 +1815,20 @@ fn stream_write_swallows_underlying_io_error_after_plaintext_processed() {
 fn make_disjoint_suite_configs() -> (ClientConfig, ServerConfig) {
     let kt = KeyType::RSA;
     let mut server_config = make_server_config(kt);
-    server_config.cipher_suites = vec![find_suite(
+    server_config.tls12_cipher_suites = vec![find_tls12_suite(
         CipherSuite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
     )];
+    server_config
+        .tls13_cipher_suites
+        .clear();
 
     let mut client_config = make_client_config(kt);
-    client_config.cipher_suites = vec![find_suite(
+    client_config.tls12_cipher_suites = vec![find_tls12_suite(
         CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     )];
+    client_config
+        .tls13_cipher_suites
+        .clear();
 
     (client_config, server_config)
 }
@@ -2152,8 +2153,8 @@ fn test_tls12_exporter() {
         let mut client_config = make_client_config(*kt);
         let server_config = make_server_config(*kt);
         client_config
-            .versions
-            .replace(&[&rustls::version::TLS12]);
+            .tls13_cipher_suites
+            .clear();
 
         do_exporter_test(client_config, server_config);
     }
@@ -2165,8 +2166,8 @@ fn test_tls13_exporter() {
         let mut client_config = make_client_config(*kt);
         let server_config = make_server_config(*kt);
         client_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
+            .tls12_cipher_suites
+            .clear();
 
         do_exporter_test(client_config, server_config);
     }
@@ -2176,8 +2177,12 @@ fn do_suite_test(
     client_config: ClientConfig,
     server_config: ServerConfig,
     expect_suite: SupportedCipherSuite,
-    expect_version: ProtocolVersion,
 ) {
+    let expect_version = match expect_suite {
+        SupportedCipherSuite::Tls12(_) => ProtocolVersion::TLSv1_2,
+        SupportedCipherSuite::Tls13(_) => ProtocolVersion::TLSv1_3,
+    };
+
     println!(
         "do_suite_test {:?} {:?}",
         expect_version,
@@ -2221,9 +2226,25 @@ fn do_suite_test(
     assert_eq!(Some(expect_suite), server.negotiated_cipher_suite());
 }
 
-fn find_suite(suite: CipherSuite) -> SupportedCipherSuite {
-    for scs in ALL_CIPHER_SUITES.iter().copied() {
-        if scs.suite() == suite {
+fn find_tls12_suite(suite: CipherSuite) -> &'static Tls12CipherSuite {
+    for scs in rustls::ALL_TLS12_CIPHER_SUITES
+        .iter()
+        .copied()
+    {
+        if scs.common.suite == suite {
+            return scs;
+        }
+    }
+
+    panic!("find_suite given unsupported suite");
+}
+
+fn find_tls13_suite(suite: CipherSuite) -> &'static Tls13CipherSuite {
+    for scs in rustls::ALL_TLS13_CIPHER_SUITES
+        .iter()
+        .copied()
+    {
+        if scs.common.suite == suite {
             return scs;
         }
     }
@@ -2289,29 +2310,56 @@ fn negotiated_ciphersuite_default() {
         do_suite_test(
             make_client_config(*kt),
             make_server_config(*kt),
-            find_suite(CipherSuite::TLS13_AES_256_GCM_SHA384),
-            ProtocolVersion::TLSv1_3,
+            find_tls13_suite(CipherSuite::TLS13_AES_256_GCM_SHA384).into(),
         );
     }
 }
 
 #[test]
 fn all_suites_covered() {
-    assert_eq!(ALL_CIPHER_SUITES.len(), TEST_CIPHER_SUITES.len());
+    assert_eq!(
+        ALL_TLS13_CIPHER_SUITES.len() + ALL_TLS12_CIPHER_SUITES.len(),
+        TEST_CIPHER_SUITES.len()
+    );
 }
 
 #[test]
 fn negotiated_ciphersuite_client() {
     for item in TEST_CIPHER_SUITES.iter() {
         let (version, kt, suite) = *item;
-        let scs = find_suite(suite);
         let mut client_config = make_client_config(kt);
-        client_config.cipher_suites = vec![scs];
-        client_config
-            .versions
-            .replace(&[version]);
+        let scs = match version == &rustls::version::TLS13 {
+            true => {
+                client_config
+                    .tls13_cipher_suites
+                    .clear();
+                client_config
+                    .tls12_cipher_suites
+                    .clear();
 
-        do_suite_test(client_config, make_server_config(kt), scs, version.version);
+                let suite = find_tls13_suite(suite);
+                client_config
+                    .tls13_cipher_suites
+                    .push(suite);
+                suite.into()
+            }
+            false => {
+                client_config
+                    .tls13_cipher_suites
+                    .clear();
+                client_config
+                    .tls12_cipher_suites
+                    .clear();
+
+                let suite = find_tls12_suite(suite);
+                client_config
+                    .tls12_cipher_suites
+                    .push(suite);
+                suite.into()
+            }
+        };
+
+        do_suite_test(client_config, make_server_config(kt), scs);
     }
 }
 
@@ -2319,14 +2367,39 @@ fn negotiated_ciphersuite_client() {
 fn negotiated_ciphersuite_server() {
     for item in TEST_CIPHER_SUITES.iter() {
         let (version, kt, suite) = *item;
-        let scs = find_suite(suite);
         let mut server_config = make_server_config(kt);
-        server_config.cipher_suites = vec![scs];
-        server_config
-            .versions
-            .replace(&[version]);
+        let scs = match version == &rustls::version::TLS13 {
+            true => {
+                server_config
+                    .tls13_cipher_suites
+                    .clear();
+                server_config
+                    .tls12_cipher_suites
+                    .clear();
 
-        do_suite_test(make_client_config(kt), server_config, scs, version.version);
+                let suite = find_tls13_suite(suite);
+                server_config
+                    .tls13_cipher_suites
+                    .push(suite);
+                suite.into()
+            }
+            false => {
+                server_config
+                    .tls13_cipher_suites
+                    .clear();
+                server_config
+                    .tls12_cipher_suites
+                    .clear();
+
+                let suite = find_tls12_suite(suite);
+                server_config
+                    .tls12_cipher_suites
+                    .push(suite);
+                suite.into()
+            }
+        };
+
+        do_suite_test(make_client_config(kt), server_config, scs);
     }
 }
 
@@ -2377,8 +2450,8 @@ fn key_log_for_tls12() {
     let kt = KeyType::RSA;
     let mut client_config = make_client_config(kt);
     client_config
-        .versions
-        .replace(&[&rustls::version::TLS12]);
+        .tls13_cipher_suites
+        .clear();
     client_config.key_log = client_key_log.clone();
     let client_config = Arc::new(client_config);
 
@@ -2416,8 +2489,8 @@ fn key_log_for_tls13() {
     let kt = KeyType::RSA;
     let mut client_config = make_client_config(kt);
     client_config
-        .versions
-        .replace(&[&rustls::version::TLS13]);
+        .tls12_cipher_suites
+        .clear();
     client_config.key_log = client_key_log.clone();
     let client_config = Arc::new(client_config);
 
@@ -2741,8 +2814,8 @@ fn tls13_stateful_resumption() {
     let kt = KeyType::RSA;
     let mut client_config = make_client_config(kt);
     client_config
-        .versions
-        .replace(&[&rustls::version::TLS13]);
+        .tls12_cipher_suites
+        .clear();
     let client_config = Arc::new(client_config);
 
     let mut server_config = make_server_config(kt);
@@ -2799,8 +2872,8 @@ fn tls13_stateless_resumption() {
     let kt = KeyType::RSA;
     let mut client_config = make_client_config(kt);
     client_config
-        .versions
-        .replace(&[&rustls::version::TLS13]);
+        .tls12_cipher_suites
+        .clear();
     let client_config = Arc::new(client_config);
 
     let mut server_config = make_server_config(kt);
@@ -2964,14 +3037,14 @@ mod test_quic {
         let kt = KeyType::RSA;
         let mut client_config = make_client_config(kt);
         client_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
+            .tls12_cipher_suites
+            .clear();
         client_config.enable_early_data = true;
         let client_config = Arc::new(client_config);
         let mut server_config = make_server_config(kt);
         server_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
+            .tls12_cipher_suites
+            .clear();
         server_config.max_early_data_size = 0xffffffff;
         server_config.alpn_protocols = vec!["foo".into()];
         let server_config = Arc::new(server_config);
@@ -3135,16 +3208,10 @@ mod test_quic {
 
         for &kt in ALL_KEY_TYPES.iter() {
             let mut client_config = make_client_config(kt);
-            client_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
             client_config.alpn_protocols = vec!["bar".into()];
             let client_config = Arc::new(client_config);
 
             let mut server_config = make_server_config(kt);
-            server_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
             server_config.alpn_protocols = vec!["foo".into()];
             let server_config = Arc::new(server_config);
 
@@ -3176,9 +3243,6 @@ mod test_quic {
     #[test]
     fn test_quic_no_tls13_error() {
         let mut client_config = make_client_config(KeyType::ED25519);
-        client_config
-            .versions
-            .replace(&[&rustls::version::TLS12]);
         client_config.alpn_protocols = vec!["foo".into()];
         let client_config = Arc::new(client_config);
 
@@ -3193,9 +3257,6 @@ mod test_quic {
         );
 
         let mut server_config = make_server_config(KeyType::ED25519);
-        server_config
-            .versions
-            .replace(&[&rustls::version::TLS12]);
         server_config.alpn_protocols = vec!["foo".into()];
         let server_config = Arc::new(server_config);
 
@@ -3212,9 +3273,6 @@ mod test_quic {
     #[test]
     fn test_quic_invalid_early_data_size() {
         let mut server_config = make_server_config(KeyType::ED25519);
-        server_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
         server_config.alpn_protocols = vec!["foo".into()];
 
         let cases = [
@@ -3242,9 +3300,6 @@ mod test_quic {
     #[test]
     fn test_quic_server_no_params_received() {
         let mut server_config = make_server_config(KeyType::ED25519);
-        server_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
         server_config.alpn_protocols = vec!["foo".into()];
         let server_config = Arc::new(server_config);
 
@@ -3310,9 +3365,6 @@ mod test_quic {
     #[test]
     fn test_quic_server_no_tls12() {
         let mut server_config = make_server_config(KeyType::ED25519);
-        server_config
-            .versions
-            .replace(&[&rustls::version::TLS13]);
         server_config.alpn_protocols = vec!["foo".into()];
         let server_config = Arc::new(server_config);
 
@@ -3378,15 +3430,9 @@ mod test_quic {
     fn test_quic_exporter() {
         for &kt in ALL_KEY_TYPES.iter() {
             let mut client_config = make_client_config(kt);
-            client_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
             client_config.alpn_protocols = vec!["bar".into()];
 
             let mut server_config = make_server_config(kt);
-            server_config
-                .versions
-                .replace(&[&rustls::version::TLS13]);
             server_config.alpn_protocols = vec!["foo".into()];
 
             do_exporter_test(client_config, server_config);

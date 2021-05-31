@@ -3,6 +3,7 @@ use crate::msgs::enums::ProtocolVersion;
 use crate::msgs::enums::{CipherSuite, SignatureAlgorithm, SignatureScheme};
 use crate::msgs::handshake::DecomposedSignatureScheme;
 use crate::msgs::handshake::KeyExchangeAlgorithm;
+use crate::versions::{SupportedProtocolVersion, TLS12, TLS13};
 
 use std::fmt;
 
@@ -32,9 +33,6 @@ pub struct CipherSuiteCommon {
 }
 
 /// A cipher suite supported by rustls.
-///
-/// All possible instances of this type are provided by the library in
-/// the `ALL_CIPHER_SUITES` array.
 #[derive(Clone, Copy, PartialEq)]
 pub enum SupportedCipherSuite {
     /// A TLS 1.2 cipher suite
@@ -43,7 +41,12 @@ pub enum SupportedCipherSuite {
     Tls13(&'static Tls13CipherSuite),
 }
 
+/// A TLS 1.3 cipher suite supported by rustls.
+///
+/// All possible instances of this type are provided by the library in
+/// the `ALL_TLS13_CIPHER_SUITES` array.
 pub struct Tls13CipherSuite {
+    /// Common cipher suite fields
     pub common: CipherSuiteCommon,
     pub(crate) hkdf_algorithm: ring::hkdf::Algorithm,
 }
@@ -66,7 +69,7 @@ impl Tls13CipherSuite {
         }
     }
 
-    const VERSION: ProtocolVersion = ProtocolVersion::TLSv1_3;
+    const VERSION: SupportedProtocolVersion = TLS13;
 }
 
 impl From<&'static Tls13CipherSuite> for SupportedCipherSuite {
@@ -81,7 +84,21 @@ impl PartialEq for Tls13CipherSuite {
     }
 }
 
+impl fmt::Debug for Tls13CipherSuite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tls13CipherSuite")
+            .field("suite", &self.common.suite)
+            .field("bulk", &self.common.bulk)
+            .finish()
+    }
+}
+
+/// A TLS 1.2 cipher suite supported by rustls.
+///
+/// All possible instances of this type are provided by the library in
+/// the `ALL_TLS12_CIPHER_SUITES` array.
 pub struct Tls12CipherSuite {
+    /// Common cipher suite fields
     pub common: CipherSuiteCommon,
     pub(crate) hmac_algorithm: ring::hmac::Algorithm,
     /// How to exchange/agree keys.
@@ -122,7 +139,7 @@ impl Tls12CipherSuite {
         self.hmac_algorithm.digest_algorithm()
     }
 
-    const VERSION: ProtocolVersion = ProtocolVersion::TLSv1_2;
+    const VERSION: SupportedProtocolVersion = TLS12;
 }
 
 impl From<&'static Tls12CipherSuite> for SupportedCipherSuite {
@@ -134,6 +151,15 @@ impl From<&'static Tls12CipherSuite> for SupportedCipherSuite {
 impl PartialEq for Tls12CipherSuite {
     fn eq(&self, other: &Self) -> bool {
         self.common.suite == other.common.suite
+    }
+}
+
+impl fmt::Debug for Tls12CipherSuite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tls12CipherSuite")
+            .field("suite", &self.common.suite)
+            .field("bulk", &self.common.bulk)
+            .finish()
     }
 }
 
@@ -161,6 +187,14 @@ impl SupportedCipherSuite {
         self.common().suite
     }
 
+    /// The version for which the cipher suite is valid
+    pub fn version(&self) -> SupportedProtocolVersion {
+        match self {
+            SupportedCipherSuite::Tls12(_) => Tls12CipherSuite::VERSION,
+            SupportedCipherSuite::Tls13(_) => Tls13CipherSuite::VERSION,
+        }
+    }
+
     pub(crate) fn common(&self) -> &CipherSuiteCommon {
         match self {
             SupportedCipherSuite::Tls12(inner) => &inner.common,
@@ -172,14 +206,6 @@ impl SupportedCipherSuite {
         match self {
             SupportedCipherSuite::Tls12(_) => None,
             SupportedCipherSuite::Tls13(inner) => Some(inner),
-        }
-    }
-
-    /// Return true if this suite is usable for TLS `version`.
-    pub fn usable_for_version(&self, version: ProtocolVersion) -> bool {
-        match self {
-            SupportedCipherSuite::Tls12(_) => version == Tls12CipherSuite::VERSION,
-            SupportedCipherSuite::Tls13(_) => version == Tls13CipherSuite::VERSION,
         }
     }
 
@@ -332,26 +358,34 @@ pub static TLS13_AES_128_GCM_SHA256: &Tls13CipherSuite = &Tls13CipherSuite {
     hkdf_algorithm: ring::hkdf::HKDF_SHA256,
 };
 
-/// A list of all the cipher suites supported by rustls.
-pub static ALL_CIPHER_SUITES: &[SupportedCipherSuite] = &[
-    // TLS1.3 suites
-    SupportedCipherSuite::Tls13(&TLS13_AES_256_GCM_SHA384),
-    SupportedCipherSuite::Tls13(&TLS13_AES_128_GCM_SHA256),
-    SupportedCipherSuite::Tls13(&TLS13_CHACHA20_POLY1305_SHA256),
-    // TLS1.2 suites
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256),
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256),
-    SupportedCipherSuite::Tls12(&TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256),
+/// A list of all 1.3 cipher suites supported by rustls.
+pub static ALL_TLS13_CIPHER_SUITES: &[&'static Tls13CipherSuite] = &[
+    TLS13_AES_256_GCM_SHA384,
+    TLS13_AES_128_GCM_SHA256,
+    TLS13_CHACHA20_POLY1305_SHA256,
 ];
 
-/// The cipher suite configuration that an application should use by default.
+/// A list of all TLS 1.2 cipher suites supported by rustls.
+pub static ALL_TLS12_CIPHER_SUITES: &[&'static Tls12CipherSuite] = &[
+    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+    TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+];
+
+/// The TLS 1.3 cipher suite configuration that an application should use by default.
 ///
 /// This will be `ALL_CIPHER_SUITES` sans any supported cipher suites that
 /// shouldn't be enabled by most applications.
-pub static DEFAULT_CIPHER_SUITES: &[SupportedCipherSuite] = ALL_CIPHER_SUITES;
+pub static DEFAULT_TLS13_CIPHER_SUITES: &[&'static Tls13CipherSuite] = ALL_TLS13_CIPHER_SUITES;
+
+/// The TLS 1.2 cipher suite configuration that an application should use by default.
+///
+/// This will be `ALL_CIPHER_SUITES` sans any supported cipher suites that
+/// shouldn't be enabled by most applications.
+pub static DEFAULT_TLS12_CIPHER_SUITES: &[&'static Tls12CipherSuite] = ALL_TLS12_CIPHER_SUITES;
 
 // These both O(N^2)!
 pub fn choose_ciphersuite_preferring_client(
@@ -387,12 +421,10 @@ pub fn choose_ciphersuite_preferring_server(
 /// Return a list of the cipher suites in `all` with the suites
 /// incompatible with `SignatureAlgorithm` `sigalg` removed.
 pub fn reduce_given_sigalg(
-    all: &[SupportedCipherSuite],
+    all: impl Iterator<Item = SupportedCipherSuite>,
     sigalg: SignatureAlgorithm,
 ) -> Vec<SupportedCipherSuite> {
-    all.iter()
-        .filter(|&&suite| suite.usable_for_sigalg(sigalg))
-        .copied()
+    all.filter(|suite| suite.usable_for_sigalg(sigalg))
         .collect()
 }
 
@@ -403,7 +435,7 @@ pub fn reduce_given_version(
     version: ProtocolVersion,
 ) -> Vec<SupportedCipherSuite> {
     all.iter()
-        .filter(|&&suite| suite.usable_for_version(version))
+        .filter(|&&suite| suite.version().version == version)
         .copied()
         .collect()
 }
@@ -465,14 +497,20 @@ mod test {
         assert!(
             choose_ciphersuite_preferring_client(
                 &[CipherSuite::TLS_NULL_WITH_NULL_NULL],
-                ALL_CIPHER_SUITES
+                &ALL_TLS12_CIPHER_SUITES
+                    .iter()
+                    .map(|&suite| suite.into())
+                    .collect::<Vec<_>>(),
             )
             .is_none()
         );
         assert!(
             choose_ciphersuite_preferring_server(
                 &[CipherSuite::TLS_NULL_WITH_NULL_NULL],
-                ALL_CIPHER_SUITES
+                &ALL_TLS12_CIPHER_SUITES
+                    .iter()
+                    .map(|&suite| suite.into())
+                    .collect::<Vec<_>>(),
             )
             .is_none()
         );
@@ -480,34 +518,15 @@ mod test {
 
     #[test]
     fn test_scs_is_debug() {
-        println!("{:?}", ALL_CIPHER_SUITES);
-    }
-
-    #[test]
-    fn test_usable_for_version() {
-        fn ok_tls13(suite: &'static Tls13CipherSuite) {
-            let scs = SupportedCipherSuite::from(suite);
-            assert!(!scs.usable_for_version(ProtocolVersion::TLSv1_0));
-            assert!(!scs.usable_for_version(ProtocolVersion::TLSv1_2));
-            assert!(scs.usable_for_version(ProtocolVersion::TLSv1_3));
-        }
-
-        fn ok_tls12(suite: &'static Tls12CipherSuite) {
-            let scs = SupportedCipherSuite::from(suite);
-            assert!(!scs.usable_for_version(ProtocolVersion::TLSv1_0));
-            assert!(scs.usable_for_version(ProtocolVersion::TLSv1_2));
-            assert!(!scs.usable_for_version(ProtocolVersion::TLSv1_3));
-        }
-
-        ok_tls13(&TLS13_CHACHA20_POLY1305_SHA256);
-        ok_tls13(&TLS13_AES_256_GCM_SHA384);
-        ok_tls13(&TLS13_AES_128_GCM_SHA256);
-
-        ok_tls12(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
-        ok_tls12(&TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
-        ok_tls12(&TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
-        ok_tls12(&TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
-        ok_tls12(&TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+        println!("{:?}", ALL_TLS12_CIPHER_SUITES);
+        println!("{:?}", ALL_TLS13_CIPHER_SUITES);
+        println!(
+            "{:?}",
+            ALL_TLS13_CIPHER_SUITES
+                .iter()
+                .map(|&suite| SupportedCipherSuite::from(suite))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

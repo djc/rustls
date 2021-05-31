@@ -141,19 +141,13 @@ enum KeyType {
 struct BenchmarkParam {
     key_type: KeyType,
     ciphersuite: rustls::SupportedCipherSuite,
-    version: &'static rustls::SupportedProtocolVersion,
 }
 
 impl BenchmarkParam {
-    const fn new(
-        key_type: KeyType,
-        ciphersuite: rustls::SupportedCipherSuite,
-        version: &'static rustls::SupportedProtocolVersion,
-    ) -> BenchmarkParam {
+    const fn new(key_type: KeyType, ciphersuite: rustls::SupportedCipherSuite) -> BenchmarkParam {
         BenchmarkParam {
             key_type,
             ciphersuite,
-            version,
         }
     }
 }
@@ -164,66 +158,54 @@ static ALL_BENCHMARKS: &[BenchmarkParam] = &[
         SupportedCipherSuite::Tls12(
             rustls::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         ),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::ECDSA,
         SupportedCipherSuite::Tls12(
             rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
         ),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls12(
             rustls::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         ),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls12(rustls::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls12(rustls::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::ECDSA,
         SupportedCipherSuite::Tls12(rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::ECDSA,
         SupportedCipherSuite::Tls12(rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
-        &rustls::version::TLS12,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls13(rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256),
-        &rustls::version::TLS13,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls13(rustls::cipher_suite::TLS13_AES_256_GCM_SHA384),
-        &rustls::version::TLS13,
     ),
     BenchmarkParam::new(
         KeyType::RSA,
         SupportedCipherSuite::Tls13(rustls::cipher_suite::TLS13_AES_128_GCM_SHA256),
-        &rustls::version::TLS13,
     ),
     BenchmarkParam::new(
         KeyType::ECDSA,
         SupportedCipherSuite::Tls13(rustls::cipher_suite::TLS13_AES_128_GCM_SHA256),
-        &rustls::version::TLS13,
     ),
     BenchmarkParam::new(
         KeyType::ED25519,
         SupportedCipherSuite::Tls13(rustls::cipher_suite::TLS13_AES_128_GCM_SHA256),
-        &rustls::version::TLS13,
     ),
 ];
 
@@ -295,12 +277,20 @@ fn make_server_config(
         ClientAuth::No => NoClientAuth::new(),
     };
 
-    let mut cfg = ConfigBuilder::with_safe_defaults()
-        .for_server()
-        .unwrap()
-        .with_client_cert_verifier(client_auth)
-        .with_single_cert(params.key_type.get_chain(), params.key_type.get_key())
-        .expect("bad certs/private key?");
+    let mut cfg = match params.ciphersuite {
+        SupportedCipherSuite::Tls12(suite) => {
+            ConfigBuilder::with_tls13_cipher_suites(&[]).with_tls12_cipher_suites(&[suite])
+        }
+        SupportedCipherSuite::Tls13(suite) => {
+            ConfigBuilder::with_tls13_cipher_suites(&[suite]).with_tls12_cipher_suites(&[])
+        }
+    }
+    .with_safe_default_kx_groups()
+    .for_server()
+    .unwrap()
+    .with_client_cert_verifier(client_auth)
+    .with_single_cert(params.key_type.get_chain(), params.key_type.get_key())
+    .expect("bad certs/private key?");
 
     if resume == Resumption::SessionID {
         cfg.session_storage = ServerSessionMemoryCache::new(128);
@@ -310,7 +300,6 @@ fn make_server_config(
         cfg.session_storage = Arc::new(NoServerSessionStorage {});
     }
 
-    cfg.versions.replace(&[params.version]);
     cfg.max_fragment_size = max_fragment_size;
     cfg
 }
@@ -325,12 +314,18 @@ fn make_client_config(
         io::BufReader::new(fs::File::open(params.key_type.path_for("ca.cert")).unwrap());
     root_store.add_parsable_certificates(&rustls_pemfile::certs(&mut rootbuf).unwrap());
 
-    let cfg = ConfigBuilder::with_cipher_suites(&[params.ciphersuite])
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[params.version])
-        .for_client()
-        .unwrap()
-        .with_root_certificates(root_store, &[]);
+    let cfg = match params.ciphersuite {
+        SupportedCipherSuite::Tls12(suite) => {
+            ConfigBuilder::with_tls13_cipher_suites(&[]).with_tls12_cipher_suites(&[suite])
+        }
+        SupportedCipherSuite::Tls13(suite) => {
+            ConfigBuilder::with_tls13_cipher_suites(&[suite]).with_tls12_cipher_suites(&[])
+        }
+    }
+    .with_safe_default_kx_groups()
+    .for_client()
+    .unwrap()
+    .with_root_certificates(root_store, &[]);
 
     let mut cfg = if clientauth == ClientAuth::Yes {
         cfg.with_single_cert(
@@ -366,12 +361,6 @@ fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: Resu
     let client_config = Arc::new(make_client_config(params, clientauth, resume));
     let server_config = Arc::new(make_server_config(params, clientauth, resume, None));
 
-    assert!(
-        params
-            .ciphersuite
-            .usable_for_version(params.version.version)
-    );
-
     let rounds = apply_work_multiplier(if resume == Resumption::No { 512 } else { 4096 });
     let mut client_time = 0f64;
     let mut server_time = 0f64;
@@ -401,7 +390,7 @@ fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: Resu
 
     println!(
         "handshakes\t{:?}\t{:?}\t{:?}\tclient\t{}\t{}\t{:.2}\thandshake/s",
-        params.version,
+        params.ciphersuite.version(),
         params.key_type,
         params.ciphersuite.suite(),
         if clientauth == ClientAuth::Yes {
@@ -414,7 +403,7 @@ fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: Resu
     );
     println!(
         "handshakes\t{:?}\t{:?}\t{:?}\tserver\t{}\t{}\t{:.2}\thandshake/s",
-        params.version,
+        params.ciphersuite.version(),
         params.key_type,
         params.ciphersuite.suite(),
         if clientauth == ClientAuth::Yes {
@@ -495,14 +484,14 @@ fn bench_bulk(params: &BenchmarkParam, plaintext_size: u64, max_fragment_size: O
     let total_mbs = ((plaintext_size * rounds) as f64) / (1024. * 1024.);
     println!(
         "bulk\t{:?}\t{:?}\t{}\tsend\t{:.2}\tMB/s",
-        params.version,
+        params.ciphersuite.version(),
         params.ciphersuite.suite(),
         mfs_str,
         total_mbs / time_send
     );
     println!(
         "bulk\t{:?}\t{:?}\t{}\trecv\t{:.2}\tMB/s",
-        params.version,
+        params.ciphersuite.version(),
         params.ciphersuite.suite(),
         mfs_str,
         total_mbs / time_recv

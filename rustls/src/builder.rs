@@ -1,10 +1,10 @@
 use crate::client::builder::ClientConfigBuilder;
 use crate::error::Error;
 use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
-use crate::msgs::enums::ProtocolVersion;
 use crate::server::builder::ServerConfigBuilder;
-use crate::suites::{SupportedCipherSuite, DEFAULT_CIPHER_SUITES};
-use crate::versions;
+use crate::suites::{
+    Tls12CipherSuite, Tls13CipherSuite, DEFAULT_TLS12_CIPHER_SUITES, DEFAULT_TLS13_CIPHER_SUITES,
+};
 
 /// Building a [`ServerConfig`] or [`ClientConfig`] in a linker-friendly way.
 ///
@@ -18,7 +18,6 @@ use crate::versions;
 /// # use rustls::ConfigBuilder;
 /// ConfigBuilder::with_safe_default_cipher_suites()
 ///     .with_safe_default_kx_groups()
-///     .with_safe_default_protocol_versions()
 ///     .for_server()
 ///     .unwrap();
 /// ```
@@ -58,16 +57,55 @@ impl ConfigBuilder {
     ///
     /// [`ServerConfig`]: crate::ServerConfig
     /// [`ClientConfig`]: crate::ClientConfig
-    pub fn with_safe_defaults() -> ConfigBuilderWithVersions {
-        ConfigBuilder::with_safe_default_cipher_suites()
+    pub fn with_safe_defaults() -> ConfigBuilderWithKxGroups {
+        ConfigBuilder::with_safe_default_tls13_cipher_suites()
+            .with_safe_default_tls12_cipher_suites()
             .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()
+    }
+
+    /// Choose the default set of cipher suites.
+    ///
+    /// Note that this default provides only high-quality suites: there is no need
+    /// to filter out low-, export- or NULL-strength cipher suites: rustls does not
+    /// implement these.
+    pub fn with_safe_default_cipher_suites() -> ConfigBuilderWithAllSuites {
+        ConfigBuilder::with_safe_default_tls13_cipher_suites()
+            .with_safe_default_tls12_cipher_suites()
     }
 
     /// Choose a specific set of cipher suites.
-    pub fn with_cipher_suites(cipher_suites: &[SupportedCipherSuite]) -> ConfigBuilderWithSuites {
-        ConfigBuilderWithSuites {
-            cipher_suites: cipher_suites.to_vec(),
+    pub fn with_tls13_cipher_suites(
+        tls13_cipher_suites: &[&'static Tls13CipherSuite],
+    ) -> ConfigBuilderWithTls13Suites {
+        ConfigBuilderWithTls13Suites {
+            tls13_cipher_suites: tls13_cipher_suites.to_vec(),
+        }
+    }
+
+    /// Choose the default set of TLS 1.3 cipher suites.
+    ///
+    /// Note that this default provides only high-quality suites: there is no need
+    /// to filter out low-, export- or NULL-strength cipher suites: rustls does not
+    /// implement these.
+    pub fn with_safe_default_tls13_cipher_suites() -> ConfigBuilderWithTls13Suites {
+        Self::with_tls13_cipher_suites(DEFAULT_TLS13_CIPHER_SUITES)
+    }
+}
+
+/// A [`ConfigBuilder`] where we know the TLS 1.3 cipher suites.
+pub struct ConfigBuilderWithTls13Suites {
+    tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+}
+
+impl ConfigBuilderWithTls13Suites {
+    /// Choose a specific set of cipher suites.
+    pub fn with_tls12_cipher_suites(
+        self,
+        tls12_cipher_suites: &[&'static Tls12CipherSuite],
+    ) -> ConfigBuilderWithAllSuites {
+        ConfigBuilderWithAllSuites {
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: tls12_cipher_suites.to_vec(),
         }
     }
 
@@ -76,24 +114,26 @@ impl ConfigBuilder {
     /// Note that this default provides only high-quality suites: there is no need
     /// to filter out low-, export- or NULL-strength cipher suites: rustls does not
     /// implement these.
-    pub fn with_safe_default_cipher_suites() -> ConfigBuilderWithSuites {
-        Self::with_cipher_suites(DEFAULT_CIPHER_SUITES)
+    pub fn with_safe_default_tls12_cipher_suites(self) -> ConfigBuilderWithAllSuites {
+        self.with_tls12_cipher_suites(DEFAULT_TLS12_CIPHER_SUITES)
     }
 }
 
-/// A [`ConfigBuilder`] where we know the cipher suites.
-pub struct ConfigBuilderWithSuites {
-    cipher_suites: Vec<SupportedCipherSuite>,
+/// A [`ConfigBuilder`] where we know the cipher suites for all versions.
+pub struct ConfigBuilderWithAllSuites {
+    tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+    tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
 }
 
-impl ConfigBuilderWithSuites {
+impl ConfigBuilderWithAllSuites {
     /// Choose a specific set of key exchange groups.
     pub fn with_kx_groups(
         self,
         kx_groups: &[&'static SupportedKxGroup],
     ) -> ConfigBuilderWithKxGroups {
         ConfigBuilderWithKxGroups {
-            cipher_suites: self.cipher_suites,
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: self.tls12_cipher_suites,
             kx_groups: kx_groups.to_vec(),
         }
     }
@@ -106,53 +146,17 @@ impl ConfigBuilderWithSuites {
     }
 }
 
-/// A [`ConfigBuilder`] where we know the cipher suites and key exchange
-/// groups.
+/// A [`ConfigBuilder`] where we know the cipher suites, key exchange groups,
+/// and protocol versions.
 pub struct ConfigBuilderWithKxGroups {
-    cipher_suites: Vec<SupportedCipherSuite>,
+    tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+    tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
     kx_groups: Vec<&'static SupportedKxGroup>,
 }
 
 impl ConfigBuilderWithKxGroups {
-    /// Accept the default protocol versions: both TLS1.2 and TLS1.3 are enabled.
-    pub fn with_safe_default_protocol_versions(self) -> ConfigBuilderWithVersions {
-        self.with_protocol_versions(versions::DEFAULT_VERSIONS)
-    }
-
-    /// Use a specific set of protocol versions.
-    pub fn with_protocol_versions(
-        self,
-        versions: &[&'static versions::SupportedProtocolVersion],
-    ) -> ConfigBuilderWithVersions {
-        ConfigBuilderWithVersions {
-            cipher_suites: self.cipher_suites,
-            kx_groups: self.kx_groups,
-            versions: versions::EnabledVersions::new(versions),
-        }
-    }
-}
-
-/// A [`ConfigBuilder`] where we know the cipher suites, key exchange groups,
-/// and protocol versions.
-pub struct ConfigBuilderWithVersions {
-    cipher_suites: Vec<SupportedCipherSuite>,
-    kx_groups: Vec<&'static SupportedKxGroup>,
-    versions: versions::EnabledVersions,
-}
-
-impl ConfigBuilderWithVersions {
     fn validate(&self) -> Result<(), Error> {
-        let mut any_usable_suite = false;
-        for suite in &self.cipher_suites {
-            for version in &[ProtocolVersion::TLSv1_2, ProtocolVersion::TLSv1_3] {
-                if self.versions.contains(*version) && suite.usable_for_version(*version) {
-                    any_usable_suite = true;
-                    break;
-                }
-            }
-        }
-
-        if !any_usable_suite {
+        if self.tls13_cipher_suites.is_empty() && self.tls12_cipher_suites.is_empty() {
             return Err(Error::General("no usable cipher suites configured".into()));
         }
 
@@ -170,9 +174,9 @@ impl ConfigBuilderWithVersions {
     pub fn for_client(self) -> Result<ClientConfigBuilder, Error> {
         self.validate()?;
         Ok(ClientConfigBuilder {
-            cipher_suites: self.cipher_suites,
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: self.tls12_cipher_suites,
             kx_groups: self.kx_groups,
-            versions: self.versions,
         })
     }
 
@@ -183,9 +187,9 @@ impl ConfigBuilderWithVersions {
     pub fn for_server(self) -> Result<ServerConfigBuilder, Error> {
         self.validate()?;
         Ok(ServerConfigBuilder {
-            cipher_suites: self.cipher_suites,
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: self.tls12_cipher_suites,
             kx_groups: self.kx_groups,
-            versions: self.versions,
         })
     }
 }

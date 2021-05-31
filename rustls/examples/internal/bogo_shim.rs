@@ -348,9 +348,17 @@ fn make_server_cfg(opts: &Options) -> Arc<rustls::ServerConfig> {
         rustls::ALL_KX_GROUPS.to_vec()
     };
 
-    let mut cfg = rustls::ConfigBuilder::with_safe_default_cipher_suites()
-        .with_kx_groups(&kx_groups)
-        .with_safe_default_protocol_versions()
+    let cfg = match opts.tls13_supported() {
+        true => rustls::ConfigBuilder::with_safe_default_tls13_cipher_suites(),
+        false => rustls::ConfigBuilder::with_tls13_cipher_suites(&[]),
+    };
+
+    let cfg = match opts.tls12_supported() {
+        true => cfg.with_safe_default_tls12_cipher_suites(),
+        false => cfg.with_tls12_cipher_suites(&[]),
+    };
+
+    let mut cfg = cfg.with_kx_groups(&kx_groups)
         .for_server()
         .unwrap()
         .with_client_cert_verifier(client_auth)
@@ -386,19 +394,6 @@ fn make_server_cfg(opts: &Options) -> Arc<rustls::ServerConfig> {
             .map(|proto| proto.as_bytes().to_vec())
             .collect::<Vec<_>>();
     }
-
-    cfg.versions.replace(&[]);
-
-    if opts.tls12_supported() {
-        cfg.versions
-            .enable(&rustls::version::TLS12);
-    }
-
-    if opts.tls13_supported() {
-        cfg.versions
-            .enable(&rustls::version::TLS13);
-    }
-
 
     Arc::new(cfg)
 }
@@ -462,18 +457,6 @@ fn make_client_cfg(opts: &Options) -> Arc<rustls::ClientConfig> {
             .iter()
             .map(|proto| proto.as_bytes().to_vec())
             .collect();
-    }
-
-    cfg.versions.replace(&[]);
-
-    if opts.tls12_supported() {
-        cfg.versions
-            .enable(&rustls::version::TLS12);
-    }
-
-    if opts.tls13_supported() {
-        cfg.versions
-            .enable(&rustls::version::TLS13);
     }
 
     if opts.enable_early_data {

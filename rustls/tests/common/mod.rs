@@ -14,6 +14,7 @@ use rustls::{AllowAnyAuthenticatedClient, RootCertStore};
 use rustls::{Certificate, PrivateKey};
 use rustls::{ClientConfig, ClientConnection};
 use rustls::{ServerConfig, ServerConnection};
+use rustls::{DEFAULT_TLS12_CIPHER_SUITES, DEFAULT_TLS13_CIPHER_SUITES};
 
 #[cfg(feature = "dangerous_configuration")]
 use rustls::{
@@ -336,14 +337,16 @@ impl Iterator for AllClientVersions {
         match self.index {
             1 => {
                 config
-                    .versions
-                    .replace(&[&rustls::version::TLS12]);
+                    .tls12_cipher_suites
+                    .extend_from_slice(DEFAULT_TLS12_CIPHER_SUITES);
+                config.tls12_cipher_suites.clear();
                 Some(config)
             }
             2 => {
+                config.tls12_cipher_suites.clear();
                 config
-                    .versions
-                    .replace(&[&rustls::version::TLS13]);
+                    .tls13_cipher_suites
+                    .extend_from_slice(DEFAULT_TLS13_CIPHER_SUITES);
                 Some(config)
             }
             _ => None,

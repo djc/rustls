@@ -294,9 +294,7 @@ pub mod internal {
 
 // The public interface is:
 pub use crate::anchors::{DistinguishedNames, OwnedTrustAnchor, RootCertStore};
-pub use crate::builder::{
-    ConfigBuilder, ConfigBuilderWithKxGroups, ConfigBuilderWithSuites, ConfigBuilderWithVersions,
-};
+pub use crate::builder::{ConfigBuilder, ConfigBuilderWithKxGroups, ConfigBuilderWithTls13Suites};
 pub use crate::client::handy::{ClientSessionMemoryCache, NoClientSessionStorage};
 pub use crate::client::ResolvesClientCert;
 pub use crate::client::StoresClientSessions;
@@ -318,7 +316,9 @@ pub use crate::server::{ClientHello, ProducesTickets, ResolvesServerCert};
 pub use crate::server::{ServerConfig, ServerConnection};
 pub use crate::stream::{Stream, StreamOwned};
 pub use crate::suites::{
-    BulkAlgorithm, SupportedCipherSuite, ALL_CIPHER_SUITES, DEFAULT_CIPHER_SUITES,
+    BulkAlgorithm, SupportedCipherSuite, Tls12CipherSuite, Tls13CipherSuite,
+    ALL_TLS12_CIPHER_SUITES, ALL_TLS13_CIPHER_SUITES, DEFAULT_TLS12_CIPHER_SUITES,
+    DEFAULT_TLS13_CIPHER_SUITES,
 };
 pub use crate::ticketer::Ticketer;
 pub use crate::verify::{

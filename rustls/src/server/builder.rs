@@ -4,9 +4,8 @@ use crate::keylog::NoKeyLog;
 use crate::kx::SupportedKxGroup;
 use crate::server::handy;
 use crate::server::{ResolvesServerCert, ServerConfig};
-use crate::suites::SupportedCipherSuite;
+use crate::suites::{Tls12CipherSuite, Tls13CipherSuite};
 use crate::verify;
-use crate::versions;
 
 use std::sync::Arc;
 
@@ -24,7 +23,6 @@ use std::sync::Arc;
 /// # let private_key = rustls::PrivateKey(vec![]);
 /// ConfigBuilder::with_safe_default_cipher_suites()
 ///     .with_safe_default_kx_groups()
-///     .with_safe_default_protocol_versions()
 ///     .for_server()
 ///     .unwrap()
 ///     .with_no_client_auth()
@@ -52,9 +50,9 @@ use std::sync::Arc;
 /// * [`ServerConfig::alpn_protocols`]: the default is empty -- no ALPN protocol is negotiated.
 /// * [`ServerConfig::key_log`]: key material is not logged.
 pub struct ServerConfigBuilder {
-    pub(crate) cipher_suites: Vec<SupportedCipherSuite>,
+    pub(crate) tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+    pub(crate) tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
     pub(crate) kx_groups: Vec<&'static SupportedKxGroup>,
-    pub(crate) versions: versions::EnabledVersions,
 }
 
 impl ServerConfigBuilder {
@@ -64,9 +62,9 @@ impl ServerConfigBuilder {
         client_cert_verifier: Arc<dyn verify::ClientCertVerifier>,
     ) -> ServerConfigBuilderWithClientAuth {
         ServerConfigBuilderWithClientAuth {
-            cipher_suites: self.cipher_suites,
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: self.tls12_cipher_suites,
             kx_groups: self.kx_groups,
-            versions: self.versions,
             verifier: client_cert_verifier,
         }
     }
@@ -80,9 +78,9 @@ impl ServerConfigBuilder {
 /// A [`ServerConfigBuilder`] where we know the cipher suites, key exchange
 /// groups, enabled versions, and client auth policy.
 pub struct ServerConfigBuilderWithClientAuth {
-    cipher_suites: Vec<SupportedCipherSuite>,
+    tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+    tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
     kx_groups: Vec<&'static SupportedKxGroup>,
-    versions: versions::EnabledVersions,
     verifier: Arc<dyn verify::ClientCertVerifier>,
 }
 
@@ -135,7 +133,8 @@ impl ServerConfigBuilderWithClientAuth {
     /// Sets a custom [`ResolvesServerCert`].
     pub fn with_cert_resolver(self, cert_resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
         ServerConfig {
-            cipher_suites: self.cipher_suites,
+            tls13_cipher_suites: self.tls13_cipher_suites,
+            tls12_cipher_suites: self.tls12_cipher_suites,
             kx_groups: self.kx_groups,
             verifier: self.verifier,
             cert_resolver,
@@ -144,7 +143,6 @@ impl ServerConfigBuilderWithClientAuth {
             session_storage: handy::ServerSessionMemoryCache::new(256),
             ticketer: Arc::new(handy::NeverProducesTickets {}),
             alpn_protocols: Vec::new(),
-            versions: self.versions,
             key_log: Arc::new(NoKeyLog {}),
             #[cfg(feature = "quic")]
             max_early_data_size: 0,

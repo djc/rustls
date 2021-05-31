@@ -12,9 +12,8 @@ use crate::msgs::enums::ProtocolVersion;
 use crate::msgs::enums::SignatureScheme;
 use crate::msgs::handshake::{CertificatePayload, ClientExtension};
 use crate::sign;
-use crate::suites::SupportedCipherSuite;
+use crate::suites::{SupportedCipherSuite, Tls12CipherSuite, Tls13CipherSuite};
 use crate::verify;
-use crate::versions;
 
 #[cfg(feature = "quic")]
 use crate::quic;
@@ -85,7 +84,10 @@ pub trait ResolvesClientCert: Send + Sync {
 #[derive(Clone)]
 pub struct ClientConfig {
     /// List of cipher suites, in preference order.
-    pub cipher_suites: Vec<SupportedCipherSuite>,
+    pub tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+
+    /// List of cipher suites, in preference order.
+    pub tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
 
     /// List of supported key exchange algorithms, in preference order -- the
     /// first element is the highest priority.
@@ -120,10 +122,6 @@ pub struct ClientConfig {
     /// The default is true.
     pub enable_tickets: bool,
 
-    /// Supported versions, in no particular order.  The default
-    /// is all supported versions.
-    pub versions: versions::EnabledVersions,
-
     /// Whether to send the Server Name Indication (SNI) extension
     /// during the client handshake.
     ///
@@ -146,15 +144,13 @@ pub struct ClientConfig {
 
 impl ClientConfig {
     #[doc(hidden)]
-    /// We support a given TLS version if it's quoted in the configured
-    /// versions *and* at least one ciphersuite for this version is
-    /// also configured.
+    /// We support a given TLS version if at least one cipher suite for it has been configured
     pub fn supports_version(&self, v: ProtocolVersion) -> bool {
-        self.versions.contains(v)
-            && self
-                .cipher_suites
-                .iter()
-                .any(|cs| cs.usable_for_version(v))
+        match v {
+            ProtocolVersion::TLSv1_3 => !self.tls13_cipher_suites.is_empty(),
+            ProtocolVersion::TLSv1_2 => !self.tls12_cipher_suites.is_empty(),
+            _ => false,
+        }
     }
 
     /// Access configuration options whose use is dangerous and requires
@@ -164,11 +160,21 @@ impl ClientConfig {
         danger::DangerousClientConfig { cfg: self }
     }
 
-    fn find_cipher_suite(&self, suite: CipherSuite) -> Option<SupportedCipherSuite> {
-        self.cipher_suites
+    fn all_suites(&self) -> impl Iterator<Item = SupportedCipherSuite> + '_ {
+        let tls13 = self
+            .tls13_cipher_suites
             .iter()
-            .copied()
-            .find(|&scs| scs.suite() == suite)
+            .map(|&s| s.into());
+        let tls12 = self
+            .tls12_cipher_suites
+            .iter()
+            .map(|&s| s.into());
+        tls13.chain(tls12)
+    }
+
+    fn find_cipher_suite(&self, suite: CipherSuite) -> Option<SupportedCipherSuite> {
+        self.all_suites()
+            .find(|s| s.suite() == suite)
     }
 }
 

@@ -309,8 +309,6 @@ Options:
     --auth-key KEY      Read client authentication key from KEY.
     --auth-certs CERTS  Read client authentication certificates from CERTS.
                         CERTS must match up with KEY.
-    --protover VERSION  Disable default TLS version list, and use
-                        VERSION instead.  May be used multiple times.
     --suite SUITE       Disable default cipher suite list, and use
                         SUITE instead.  May be used multiple times.
     --proto PROTOCOL    Send ALPN extension containing PROTOCOL.
@@ -358,53 +356,6 @@ fn lookup_ipv4(host: &str, port: u16) -> SocketAddr {
     }
 
     unreachable!("Cannot lookup address");
-}
-
-/// Find a ciphersuite with the given name
-fn find_suite(name: &str) -> Option<rustls::SupportedCipherSuite> {
-    for suite in rustls::ALL_CIPHER_SUITES {
-        let sname = format!("{:?}", suite.suite()).to_lowercase();
-
-        if sname == name.to_string().to_lowercase() {
-            return Some(*suite);
-        }
-    }
-
-    None
-}
-
-/// Make a vector of cipher suites named in `suites`
-fn lookup_suites(suites: &[String]) -> Vec<rustls::SupportedCipherSuite> {
-    let mut out = Vec::new();
-
-    for csname in suites {
-        let scs = find_suite(csname);
-        match scs {
-            Some(s) => out.push(s),
-            None => panic!("cannot look up ciphersuite '{}'", csname),
-        }
-    }
-
-    out
-}
-
-/// Make a vector of protocol versions named in `versions`
-fn lookup_versions(versions: &[String]) -> Vec<&'static rustls::SupportedProtocolVersion> {
-    let mut out = Vec::new();
-
-    for vname in versions {
-        let version = match vname.as_ref() {
-            "1.2" => &rustls::version::TLS12,
-            "1.3" => &rustls::version::TLS13,
-            _ => panic!(
-                "cannot look up version '{}', valid are '1.2' and '1.3'",
-                vname
-            ),
-        };
-        out.push(version);
-    }
-
-    out
 }
 
 fn load_certs(filename: &str) -> Vec<rustls::Certificate> {
@@ -487,21 +438,41 @@ fn make_config(args: &Args) -> Arc<rustls::ClientConfig> {
         root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
     }
 
-    let suites = if !args.flag_suite.is_empty() {
-        lookup_suites(&args.flag_suite)
-    } else {
-        rustls::DEFAULT_CIPHER_SUITES.to_vec()
-    };
+    let suites = args
+        .flag_suite
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect::<Vec<_>>();
 
-    let versions = if !args.flag_protover.is_empty() {
-        lookup_versions(&args.flag_protover)
-    } else {
-        rustls::DEFAULT_VERSIONS.to_vec()
-    };
+    let tls13_cipher_suites = rustls::ALL_TLS13_CIPHER_SUITES
+        .iter()
+        .copied()
+        .filter(|suite| {
+            if suites.is_empty() {
+                return true;
+            }
 
-    let config = rustls::ConfigBuilder::with_cipher_suites(&suites)
+            let name = format!("{:?}", suite.common.suite).to_lowercase();
+            suites.contains(&name)
+        })
+        .collect::<Vec<_>>();
+
+    let tls12_cipher_suites = rustls::ALL_TLS12_CIPHER_SUITES
+        .iter()
+        .copied()
+        .filter(|&suite| {
+            if suites.is_empty() {
+                return true;
+            }
+
+            let name = format!("{:?}", suite.common.suite).to_lowercase();
+            suites.contains(&name)
+        })
+        .collect::<Vec<_>>();
+
+    let config = rustls::ConfigBuilder::with_tls13_cipher_suites(&tls13_cipher_suites)
+        .with_tls12_cipher_suites(&tls12_cipher_suites)
         .with_safe_default_kx_groups()
-        .with_protocol_versions(&versions)
         .for_client()
         .expect("inconsistent cipher-suite/versions selected")
         .with_root_certificates(root_store, &[]);

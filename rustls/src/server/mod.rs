@@ -9,7 +9,7 @@ use crate::msgs::enums::ProtocolVersion;
 use crate::msgs::enums::SignatureScheme;
 use crate::msgs::handshake::ServerExtension;
 use crate::sign;
-use crate::suites::SupportedCipherSuite;
+use crate::suites::{SupportedCipherSuite, Tls12CipherSuite, Tls13CipherSuite};
 use crate::verify;
 #[cfg(feature = "quic")]
 use crate::{conn::Protocol, quic};
@@ -153,8 +153,11 @@ impl<'a> ClientHello<'a> {
 /// Create one of these via `ServerConfigBuilder`.
 #[derive(Clone)]
 pub struct ServerConfig {
-    /// List of cipher suites, in preference order.
-    pub cipher_suites: Vec<SupportedCipherSuite>,
+    /// List of TLS 1.3 cipher suites, in preference order.
+    pub tls13_cipher_suites: Vec<&'static Tls13CipherSuite>,
+
+    /// List of TLS 1.2 cipher suites, in preference order.
+    pub tls12_cipher_suites: Vec<&'static Tls12CipherSuite>,
 
     /// List of supported key exchange groups.
     ///
@@ -189,10 +192,6 @@ pub struct ServerConfig {
     /// If empty we don't do ALPN at all.
     pub alpn_protocols: Vec<Vec<u8>>,
 
-    /// Supported protocol versions, in no particular order.
-    /// The default is all supported versions.
-    pub versions: crate::versions::EnabledVersions,
-
     /// How to verify client certificates.
     verifier: Arc<dyn verify::ClientCertVerifier>,
 
@@ -208,15 +207,25 @@ pub struct ServerConfig {
 
 impl ServerConfig {
     #[doc(hidden)]
-    /// We support a given TLS version if it's quoted in the configured
-    /// versions *and* at least one ciphersuite for this version is
-    /// also configured.
+    /// We support a given TLS version if at least one cipher suite for it has been configured
     pub fn supports_version(&self, v: ProtocolVersion) -> bool {
-        self.versions.contains(v)
-            && self
-                .cipher_suites
-                .iter()
-                .any(|cs| cs.usable_for_version(v))
+        match v {
+            ProtocolVersion::TLSv1_3 => !self.tls13_cipher_suites.is_empty(),
+            ProtocolVersion::TLSv1_2 => !self.tls12_cipher_suites.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn all_suites(&self) -> impl Iterator<Item = SupportedCipherSuite> + '_ {
+        let tls13 = self
+            .tls13_cipher_suites
+            .iter()
+            .map(|&s| s.into());
+        let tls12 = self
+            .tls12_cipher_suites
+            .iter()
+            .map(|&s| s.into());
+        tls13.chain(tls12)
     }
 }
 

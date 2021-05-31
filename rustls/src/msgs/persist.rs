@@ -68,13 +68,11 @@ pub struct ClientSessionValue {
 impl ClientSessionValue {
     pub fn resolve_cipher_suite(
         self,
-        enabled_cipher_suites: &[SupportedCipherSuite],
+        mut enabled_cipher_suites: impl Iterator<Item = SupportedCipherSuite>,
         time: TimeBase,
     ) -> Option<ClientSessionValueWithResolvedCipherSuite> {
-        let supported_cipher_suite = enabled_cipher_suites
-            .iter()
-            .copied()
-            .find(|scs| scs.suite() == self.cipher_suite)?;
+        let supported_cipher_suite =
+            enabled_cipher_suites.find(|scs| scs.suite() == self.cipher_suite)?;
         Some(ClientSessionValueWithResolvedCipherSuite {
             value: self,
             supported_cipher_suite,
