@@ -456,6 +456,7 @@ mod client_hello {
             cx.common.quic.hs_secrets = Some(quic::Secrets {
                 client: client_key,
                 server: server_key,
+                suite,
             });
         }
 
@@ -715,6 +716,7 @@ mod client_hello {
             cx.common.quic.traffic_secrets = Some(quic::Secrets {
                 client: _client_key,
                 server: server_key,
+                suite,
             });
         }
 

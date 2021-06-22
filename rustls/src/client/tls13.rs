@@ -167,6 +167,7 @@ pub(super) fn handle_server_hello(
         cx.common.quic.hs_secrets = Some(quic::Secrets {
             server: server_key,
             client: client_key,
+            suite,
         });
     }
 
@@ -952,6 +953,7 @@ impl hs::State for ExpectFinished {
                 cx.common.quic.traffic_secrets = Some(quic::Secrets {
                     client: client_key,
                     server: server_key,
+                    suite: st.suite,
                 });
                 return Ok(Box::new(ExpectQuicTraffic(st)));
             }
