@@ -453,12 +453,8 @@ mod client_hello {
 
         #[cfg(feature = "quic")]
         {
-            cx.common.quic.hs_secrets = Some(quic::Secrets {
-                client: client_key,
-                server: server_key,
-                suite,
-                is_client: false,
-            });
+            cx.common.quic.hs_secrets =
+                Some(quic::Secrets::new(client_key, server_key, suite, false));
         }
 
         Ok(key_schedule)
@@ -714,12 +710,8 @@ mod client_hello {
 
         #[cfg(feature = "quic")]
         {
-            cx.common.quic.traffic_secrets = Some(quic::Secrets {
-                client: _client_key,
-                server: server_key,
-                suite,
-                is_client: false,
-            });
+            cx.common.quic.traffic_secrets =
+                Some(quic::Secrets::new(_client_key, server_key, suite, false));
         }
 
         key_schedule_traffic
