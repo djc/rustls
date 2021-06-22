@@ -94,23 +94,69 @@ pub trait QuicExt {
 /// Keys used to communicate in a single direction
 pub struct DirectionalKeys {
     /// Encrypts or decrypts a packet's headers
-    pub header: aead::quic::HeaderProtectionKey,
+    pub header: HeaderProtectionKey,
     /// Encrypts or decrypts the payload of a packet
     pub packet: PacketKey,
 }
 
 impl DirectionalKeys {
     pub(crate) fn new(suite: &'static Tls13CipherSuite, secret: &hkdf::Prk) -> Self {
-        let hp_alg = match suite.common.bulk {
+        Self {
+            header: HeaderProtectionKey::new(suite, secret),
+            packet: PacketKey::new(suite, secret),
+        }
+    }
+}
+
+/// A key for generating QUIC header protection masks
+pub struct HeaderProtectionKey(aead::quic::HeaderProtectionKey);
+
+impl HeaderProtectionKey {
+    fn new(suite: &'static Tls13CipherSuite, secret: &hkdf::Prk) -> Self {
+        let alg = match suite.common.bulk {
             BulkAlgorithm::Aes128Gcm => &aead::quic::AES_128,
             BulkAlgorithm::Aes256Gcm => &aead::quic::AES_256,
             BulkAlgorithm::Chacha20Poly1305 => &aead::quic::CHACHA20,
         };
 
-        Self {
-            header: hkdf_expand(secret, hp_alg, b"quic hp", &[]),
-            packet: PacketKey::new(suite, secret),
+        Self(hkdf_expand(secret, alg, b"quic hp", &[]))
+    }
+
+    /// Mask or unmask protected QUIC packet header bytes in place
+    ///
+    /// `sample` should contain the sample of encrypted payload; `first` should reference the
+    /// first byte of the header; `length` should reference the length bytes of the header.
+    ///
+    /// Will return an error if the `sample` length does not match the key.
+    pub fn xor_in_place(
+        &self,
+        sample: &[u8],
+        first: &mut u8,
+        length: &mut [u8],
+    ) -> Result<(), Error> {
+        let mask = self
+            .0
+            .new_mask(sample)
+            .map_err(|_| Error::General("sample of invalid length".into()))?;
+
+        const LONG_HEADER_FORM: u8 = 0x80;
+        let bits = match *first & LONG_HEADER_FORM == LONG_HEADER_FORM {
+            true => 0x0f,  // Long header: 4 bits masked
+            false => 0x1f, // Short header: 5 bits masked
+        };
+
+        *first ^= mask[0] & bits;
+        for (dst, m) in length.iter_mut().zip(&mask[1..]) {
+            *dst ^= m;
         }
+
+        Ok(())
+    }
+
+    /// Expected sample length for the key's algorithm
+    #[inline]
+    pub fn sample_len(&self) -> usize {
+        self.0.algorithm().sample_len()
     }
 }
 
