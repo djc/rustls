@@ -2960,7 +2960,7 @@ mod test_quic {
         recv: &mut dyn Connection,
     ) -> Result<Option<quic::Keys>, Error> {
         let mut buf = Vec::new();
-        let secrets = loop {
+        let change = loop {
             let prev = buf.len();
             if let Some(x) = send.write_hs(&mut buf) {
                 break Some(x);
@@ -2974,7 +2974,11 @@ mod test_quic {
         } else {
             assert_eq!(recv.alert(), None);
         }
-        Ok(secrets)
+
+        Ok(change.map(|change| match change {
+            quic::KeyChange::Handshake { keys } => keys,
+            quic::KeyChange::OneRtt { keys, .. } => keys,
+        }))
     }
 
     #[test]
