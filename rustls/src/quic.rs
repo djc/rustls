@@ -122,31 +122,66 @@ impl HeaderProtectionKey {
         Self(hkdf_expand(secret, alg, b"quic hp", &[]))
     }
 
-    /// Mask or unmask protected QUIC packet header bytes in place
+    /// Adds/removes QUIC Header Protection.
     ///
-    /// `sample` should contain the sample of encrypted payload; `first` should reference the
-    /// first byte of the header; `length` should reference the length bytes of the header.
+    /// `sample` must contain the sample of encrypted payload; see
+    /// [Header Protection Sample].
     ///
-    /// Will return an error if the `sample` length does not match the key.
+    /// `first` must reference the first byte of the header, referred to as
+    /// `packet[0]` in [Header Protection Application].
+    ///
+    /// `packet_number` must reference the Packet Number field; this is
+    /// `packet[pn_offset:pn_offset+pn_length]` in [Header Protection Application].
+    ///
+    /// Returns an error without modifying anything if `sample` is not
+    /// the correct length (see [Header Protection Sample] and [`Self::sample_len()`]),
+    /// or `packet_number` is longer than allowed (see
+    /// [Packet Number Encoding and Decoding]).
+    ///
+    /// Otherwise, `first` and `packet_number` will have the header protection
+    /// added/removed.
+    ///
+    /// [Header Protection Application]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.1
+    /// [Header Protection Sample]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.2
+    /// [Packet Number Encoding and Decoding]: https://datatracker.ietf.org/doc/html/rfc9000#section-17.1
     pub fn xor_in_place(
         &self,
         sample: &[u8],
         first: &mut u8,
-        length: &mut [u8],
+        packet_number: &mut [u8],
     ) -> Result<(), Error> {
+        // This implements [Header Protection Application] almost verbatim.
+
         let mask = self
             .0
             .new_mask(sample)
             .map_err(|_| Error::General("sample of invalid length".into()))?;
+
+        // The `unwrap()` will not panic because `new_mask` returns a
+        // non-empty result.
+        let (mask_first, mask_packet_number) = mask.split_first().unwrap();
+
+        // It is OK for the `mask_packet_number` to be longer than `packet_number`
+        // but a valid `packet_number` will never be longer than
+        // `mask_packet_number`.
+        if packet_number.len() > mask_packet_number.len() {
+            return Err(Error::General("packet number of invalid length".into()));
+        }
+
+        // Infallible from this point on. Before this point, `first` and
+        // `packet_number` are unchanged.
 
         const LONG_HEADER_FORM: u8 = 0x80;
         let bits = match *first & LONG_HEADER_FORM == LONG_HEADER_FORM {
             true => 0x0f,  // Long header: 4 bits masked
             false => 0x1f, // Short header: 5 bits masked
         };
+        *first ^= mask_first & bits;
 
-        *first ^= mask[0] & bits;
-        for (dst, m) in length.iter_mut().zip(&mask[1..]) {
+        for (dst, m) in packet_number
+            .iter_mut()
+            .zip(mask_packet_number)
+        {
             *dst ^= m;
         }
 
