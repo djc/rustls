@@ -3597,6 +3597,11 @@ mod test_quic {
             do_exporter_test(client_config, server_config);
         }
     }
+
+    #[test]
+    fn test_quic_version_can_clone() {
+        let _ = quic::Version::V1.clone();
+    }
 } // mod test_quic
 
 #[test]
