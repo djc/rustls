@@ -448,6 +448,8 @@ impl ServerConnectionData {
 
 #[cfg(feature = "quic")]
 impl quic::QuicExt for ServerConnection {
+    type ZeroRttKeys = (quic::HeaderUnmaskingKey, quic::PacketOpeningKey);
+
     fn quic_transport_parameters(&self) -> Option<&[u8]> {
         self.common
             .quic
@@ -456,13 +458,8 @@ impl quic::QuicExt for ServerConnection {
             .map(|v| v.as_ref())
     }
 
-    fn zero_rtt_keys(&self) -> Option<quic::DirectionalKeys> {
-        Some(quic::DirectionalKeys::new(
-            self.common
-                .get_suite()
-                .and_then(|suite| suite.tls13())?,
-            self.common.quic.early_secret.as_ref()?,
-        ))
+    fn zero_rtt_keys(&self) -> Option<Self::ZeroRttKeys> {
+        quic::server_0rtt_keys(&self.common)
     }
 
     fn read_hs(&mut self, plaintext: &[u8]) -> Result<(), Error> {

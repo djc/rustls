@@ -1,7 +1,7 @@
 /// This module contains optional APIs for implementing QUIC TLS.
 use crate::cipher::{Iv, IvLen};
 pub use crate::client::ClientQuicExt;
-use crate::conn::ConnectionCommon;
+use crate::conn::{Connection, ConnectionCommon};
 use crate::error::Error;
 use crate::key_schedule::hkdf_expand;
 use crate::msgs::base::Payload;
@@ -40,10 +40,12 @@ impl Secrets {
     }
 
     /// Derive the next set of packet keys
-    pub fn next_packet_keys(&mut self) -> PacketKeySet {
-        let keys = PacketKeySet::new(self);
+    pub fn next_packet_keys(&mut self) -> (PacketSealingKey, PacketOpeningKey) {
+        let (local, remote) = self.local_remote();
+        let sealing = PacketSealingKey(PacketKey::new(self.suite, local));
+        let opening = PacketOpeningKey(PacketKey::new(self.suite, remote));
         self.update();
-        keys
+        (sealing, opening)
     }
 
     fn update(&mut self) {
@@ -62,7 +64,13 @@ impl Secrets {
 }
 
 /// Generic methods for QUIC sessions
-pub trait QuicExt {
+pub trait QuicExt: Connection {
+    /// 0-RTT keys for this side of the connection
+    ///
+    /// Since 0-RTT traffic is by definition unidirectional, clients only get keys used to protect
+    /// packets, while servers only get keys used to unprotect packets.
+    type ZeroRttKeys;
+
     /// Return the TLS-encoded transport parameters for the session's peer.
     ///
     /// While the transport parameters are technically available prior to the
@@ -73,7 +81,7 @@ pub trait QuicExt {
     fn quic_transport_parameters(&self) -> Option<&[u8]>;
 
     /// Compute the keys for encrypting/decrypting 0-RTT packets, if available
-    fn zero_rtt_keys(&self) -> Option<DirectionalKeys>;
+    fn zero_rtt_keys(&self) -> Option<Self::ZeroRttKeys>;
 
     /// Consume unencrypted TLS handshake data.
     ///
@@ -91,37 +99,10 @@ pub trait QuicExt {
     fn alert(&self) -> Option<AlertDescription>;
 }
 
-/// Keys used to communicate in a single direction
-pub struct DirectionalKeys {
-    /// Encrypts or decrypts a packet's headers
-    pub header: HeaderProtectionKey,
-    /// Encrypts or decrypts the payload of a packet
-    pub packet: PacketKey,
-}
-
-impl DirectionalKeys {
-    pub(crate) fn new(suite: &'static Tls13CipherSuite, secret: &hkdf::Prk) -> Self {
-        Self {
-            header: HeaderProtectionKey::new(suite, secret),
-            packet: PacketKey::new(suite, secret),
-        }
-    }
-}
-
 /// A QUIC header protection key
-pub struct HeaderProtectionKey(aead::quic::HeaderProtectionKey);
+pub struct HeaderMaskingKey(HeaderProtectionKey);
 
-impl HeaderProtectionKey {
-    fn new(suite: &'static Tls13CipherSuite, secret: &hkdf::Prk) -> Self {
-        let alg = match suite.common.bulk {
-            BulkAlgorithm::Aes128Gcm => &aead::quic::AES_128,
-            BulkAlgorithm::Aes256Gcm => &aead::quic::AES_256,
-            BulkAlgorithm::Chacha20Poly1305 => &aead::quic::CHACHA20,
-        };
-
-        Self(hkdf_expand(secret, alg, b"quic hp", &[]))
-    }
-
+impl HeaderMaskingKey {
     /// Adds/removes QUIC Header Protection.
     ///
     /// `sample` must contain the sample of encrypted payload; see
@@ -144,7 +125,80 @@ impl HeaderProtectionKey {
     /// [Header Protection Application]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.1
     /// [Header Protection Sample]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.2
     /// [Packet Number Encoding and Decoding]: https://datatracker.ietf.org/doc/html/rfc9000#section-17.1
-    pub fn xor_in_place(
+    pub fn mask_in_place(
+        &self,
+        sample: &[u8],
+        first: &mut u8,
+        packet_number: &mut [u8],
+    ) -> Result<(), Error> {
+        self.0
+            .xor_in_place(sample, first, packet_number)
+    }
+
+    /// Expected sample length for the key's algorithm
+    #[inline]
+    pub fn sample_len(&self) -> usize {
+        self.0.0.algorithm().sample_len()
+    }
+}
+
+/// A QUIC header protection key
+pub struct HeaderUnmaskingKey(HeaderProtectionKey);
+
+impl HeaderUnmaskingKey {
+    /// Adds/removes QUIC Header Protection.
+    ///
+    /// `sample` must contain the sample of encrypted payload; see
+    /// [Header Protection Sample].
+    ///
+    /// `first` must reference the first byte of the header, referred to as
+    /// `packet[0]` in [Header Protection Application].
+    ///
+    /// `packet_number` must reference the Packet Number field; this is
+    /// `packet[pn_offset:pn_offset+pn_length]` in [Header Protection Application].
+    ///
+    /// Returns an error without modifying anything if `sample` is not
+    /// the correct length (see [Header Protection Sample] and [`Self::sample_len()`]),
+    /// or `packet_number` is longer than allowed (see
+    /// [Packet Number Encoding and Decoding]).
+    ///
+    /// Otherwise, `first` and `packet_number` will have the header protection
+    /// added/removed.
+    ///
+    /// [Header Protection Application]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.1
+    /// [Header Protection Sample]: https://datatracker.ietf.org/doc/html/rfc9001#section-5.4.2
+    /// [Packet Number Encoding and Decoding]: https://datatracker.ietf.org/doc/html/rfc9000#section-17.1
+    pub fn unmask_in_place(
+        &self,
+        sample: &[u8],
+        first: &mut u8,
+        packet_number: &mut [u8],
+    ) -> Result<(), Error> {
+        self.0
+            .xor_in_place(sample, first, packet_number)
+    }
+
+    /// Expected sample length for the key's algorithm
+    #[inline]
+    pub fn sample_len(&self) -> usize {
+        self.0.0.algorithm().sample_len()
+    }
+}
+
+struct HeaderProtectionKey(aead::quic::HeaderProtectionKey);
+
+impl HeaderProtectionKey {
+    fn new(suite: &'static Tls13CipherSuite, secret: &hkdf::Prk) -> Self {
+        let alg = match suite.common.bulk {
+            BulkAlgorithm::Aes128Gcm => &aead::quic::AES_128,
+            BulkAlgorithm::Aes256Gcm => &aead::quic::AES_256,
+            BulkAlgorithm::Chacha20Poly1305 => &aead::quic::CHACHA20,
+        };
+
+        Self(hkdf_expand(secret, alg, b"quic hp", &[]))
+    }
+
+    fn xor_in_place(
         &self,
         sample: &[u8],
         first: &mut u8,
@@ -184,16 +238,89 @@ impl HeaderProtectionKey {
 
         Ok(())
     }
+}
 
-    /// Expected sample length for the key's algorithm
+/// A key for protecting QUIC packet payloads
+pub struct PacketSealingKey(PacketKey);
+
+impl PacketSealingKey {
+    /// Encrypt a QUIC packet
+    ///
+    /// Takes a `packet_number`, used to derive the nonce; the packet `header`, which is used as
+    /// the additional authenticated data; and the `payload`. The authentication tag is returned if
+    /// encryption succeeds.
+    ///
+    /// Fails iff the payload is longer than allowed by the cipher suite's AEAD algorithm.
+    pub fn seal_in_place(
+        &self,
+        packet_number: u64,
+        header: &[u8],
+        payload: &mut [u8],
+    ) -> Result<Tag, Error> {
+        let aad = aead::Aad::from(header);
+        let nonce = nonce_for(packet_number, &self.0.iv);
+        let tag = self
+            .0
+            .key
+            .seal_in_place_separate_tag(nonce, aad, payload)
+            .map_err(|_| Error::EncryptError)?;
+        Ok(Tag(tag))
+    }
+
+    /// Number of times the packet key can be used without sacrificing confidentiality
+    ///
+    /// See <https://www.rfc-editor.org/rfc/rfc9001.html#name-confidentiality-limit>.
     #[inline]
-    pub fn sample_len(&self) -> usize {
-        self.0.algorithm().sample_len()
+    pub fn confidentiality_limit(&self) -> u64 {
+        self.0.suite.confidentiality_limit
+    }
+
+    /// Tag length for the underlying AEAD algorithm
+    #[inline]
+    pub fn tag_len(&self) -> usize {
+        self.0.key.algorithm().tag_len()
     }
 }
 
-/// Keys to encrypt or decrypt the payload of a packet
-pub struct PacketKey {
+/// A key used to remove QUIC packet payload protection
+pub struct PacketOpeningKey(PacketKey);
+
+impl PacketOpeningKey {
+    /// Decrypt a QUIC packet
+    ///
+    /// Takes the packet `header`, which is used as the additional authenticated data, and the
+    /// `payload`, which includes the authentication tag.
+    ///
+    /// If the return value is `Ok`, the decrypted payload can be found in `payload`, up to the
+    /// length found in the return value.
+    pub fn open_in_place<'a>(
+        &self,
+        packet_number: u64,
+        header: &[u8],
+        payload: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
+        let payload_len = payload.len();
+        let aad = aead::Aad::from(header);
+        let nonce = nonce_for(packet_number, &self.0.iv);
+        self.0
+            .key
+            .open_in_place(nonce, aad, payload)
+            .map_err(|_| Error::DecryptError)?;
+
+        let plain_len = payload_len - self.0.key.algorithm().tag_len();
+        Ok(&payload[..plain_len])
+    }
+
+    /// Number of times the packet key can be used without sacrificing integrity
+    ///
+    /// See <https://www.rfc-editor.org/rfc/rfc9001.html#name-integrity-limit>.
+    #[inline]
+    pub fn integrity_limit(&self) -> u64 {
+        self.0.suite.integrity_limit
+    }
+}
+
+struct PacketKey {
     /// Encrypts or decrypts a packet's payload
     key: aead::LessSafeKey,
     /// Computes unique nonces for each packet
@@ -215,74 +342,6 @@ impl PacketKey {
             suite,
         }
     }
-
-    /// Encrypt a QUIC packet
-    ///
-    /// Takes a `packet_number`, used to derive the nonce; the packet `header`, which is used as
-    /// the additional authenticated data; and the `payload`. The authentication tag is returned if
-    /// encryption succeeds.
-    ///
-    /// Fails iff the payload is longer than allowed by the cipher suite's AEAD algorithm.
-    pub fn encrypt_in_place(
-        &self,
-        packet_number: u64,
-        header: &[u8],
-        payload: &mut [u8],
-    ) -> Result<Tag, Error> {
-        let aad = aead::Aad::from(header);
-        let nonce = nonce_for(packet_number, &self.iv);
-        let tag = self
-            .key
-            .seal_in_place_separate_tag(nonce, aad, payload)
-            .map_err(|_| Error::EncryptError)?;
-        Ok(Tag(tag))
-    }
-
-    /// Decrypt a QUIC packet
-    ///
-    /// Takes the packet `header`, which is used as the additional authenticated data, and the
-    /// `payload`, which includes the authentication tag.
-    ///
-    /// If the return value is `Ok`, the decrypted payload can be found in `payload`, up to the
-    /// length found in the return value.
-    pub fn decrypt_in_place<'a>(
-        &self,
-        packet_number: u64,
-        header: &[u8],
-        payload: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
-        let payload_len = payload.len();
-        let aad = aead::Aad::from(header);
-        let nonce = nonce_for(packet_number, &self.iv);
-        self.key
-            .open_in_place(nonce, aad, payload)
-            .map_err(|_| Error::DecryptError)?;
-
-        let plain_len = payload_len - self.key.algorithm().tag_len();
-        Ok(&payload[..plain_len])
-    }
-
-    /// Number of times the packet key can be used without sacrificing confidentiality
-    ///
-    /// See <https://www.rfc-editor.org/rfc/rfc9001.html#name-confidentiality-limit>.
-    #[inline]
-    pub fn confidentiality_limit(&self) -> u64 {
-        self.suite.confidentiality_limit
-    }
-
-    /// Number of times the packet key can be used without sacrificing integrity
-    ///
-    /// See <https://www.rfc-editor.org/rfc/rfc9001.html#name-integrity-limit>.
-    #[inline]
-    pub fn integrity_limit(&self) -> u64 {
-        self.suite.integrity_limit
-    }
-
-    /// Tag length for the underlying AEAD algorithm
-    #[inline]
-    pub fn tag_len(&self) -> usize {
-        self.key.algorithm().tag_len()
-    }
 }
 
 /// AEAD tag, must be appended to encrypted cipher text
@@ -295,30 +354,16 @@ impl AsRef<[u8]> for Tag {
     }
 }
 
-/// Packet protection keys for bidirectional 1-RTT communication
-pub struct PacketKeySet {
-    /// Encrypts outgoing packets
-    pub local: PacketKey,
-    /// Decrypts incoming packets
-    pub remote: PacketKey,
-}
-
-impl PacketKeySet {
-    fn new(secrets: &Secrets) -> Self {
-        let (local, remote) = secrets.local_remote();
-        Self {
-            local: PacketKey::new(secrets.suite, local),
-            remote: PacketKey::new(secrets.suite, remote),
-        }
-    }
-}
-
 /// Complete set of keys used to communicate with the peer
 pub struct Keys {
-    /// Encrypts outgoing packets
-    pub local: DirectionalKeys,
-    /// Decrypts incoming packets
-    pub remote: DirectionalKeys,
+    /// Header protection key for outgoing packet headers
+    pub masking: HeaderMaskingKey,
+    /// Packet protection key for outgoing packet payloads
+    pub sealing: PacketSealingKey,
+    /// Header protection key for incoming packet headers
+    pub unmasking: HeaderUnmaskingKey,
+    /// Packet protection key for incoming packet payloads
+    pub opening: PacketOpeningKey,
 }
 
 impl Keys {
@@ -341,10 +386,36 @@ impl Keys {
     fn new(secrets: &Secrets) -> Self {
         let (local, remote) = secrets.local_remote();
         Self {
-            local: DirectionalKeys::new(secrets.suite, local),
-            remote: DirectionalKeys::new(secrets.suite, remote),
+            masking: HeaderMaskingKey(HeaderProtectionKey::new(secrets.suite, local)),
+            sealing: PacketSealingKey(PacketKey::new(secrets.suite, local)),
+            unmasking: HeaderUnmaskingKey(HeaderProtectionKey::new(secrets.suite, remote)),
+            opening: PacketOpeningKey(PacketKey::new(secrets.suite, remote)),
         }
     }
+}
+
+pub(crate) fn server_0rtt_keys(
+    conn: &ConnectionCommon,
+) -> Option<(HeaderUnmaskingKey, PacketOpeningKey)> {
+    let suite = conn
+        .get_suite()
+        .and_then(|suite| suite.tls13())?;
+    let secret = conn.quic.early_secret.as_ref()?;
+    let header = HeaderUnmaskingKey(HeaderProtectionKey::new(suite, secret));
+    let packet = PacketOpeningKey(PacketKey::new(suite, secret));
+    Some((header, packet))
+}
+
+pub(crate) fn client_0rtt_keys(
+    conn: &ConnectionCommon,
+) -> Option<(HeaderMaskingKey, PacketSealingKey)> {
+    let suite = conn
+        .get_suite()
+        .and_then(|suite| suite.tls13())?;
+    let secret = conn.quic.early_secret.as_ref()?;
+    let header = HeaderMaskingKey(HeaderProtectionKey::new(suite, secret));
+    let packet = PacketSealingKey(PacketKey::new(suite, secret));
+    Some((header, packet))
 }
 
 pub(crate) fn read_hs(this: &mut ConnectionCommon, plaintext: &[u8]) -> Result<(), Error> {
@@ -480,20 +551,26 @@ mod test {
 
         let secret = hkdf::Prk::new_less_safe(hkdf::HKDF_SHA256, SECRET);
         use crate::suites::TLS13_CHACHA20_POLY1305_SHA256_INTERNAL;
-        let hpk = HeaderProtectionKey::new(TLS13_CHACHA20_POLY1305_SHA256_INTERNAL, &secret);
-        let packet = PacketKey::new(TLS13_CHACHA20_POLY1305_SHA256_INTERNAL, &secret);
+        let hpk = HeaderMaskingKey(HeaderProtectionKey::new(
+            TLS13_CHACHA20_POLY1305_SHA256_INTERNAL,
+            &secret,
+        ));
+        let packet = PacketSealingKey(PacketKey::new(
+            TLS13_CHACHA20_POLY1305_SHA256_INTERNAL,
+            &secret,
+        ));
 
         let mut buf = vec![0x42, 0x00, 0xbf, 0xf4, 0x01];
         let (header, payload_tag) = buf.split_at_mut(4);
         let tag = packet
-            .encrypt_in_place(PN, &*header, payload_tag)
+            .seal_in_place(PN, &*header, payload_tag)
             .unwrap();
         buf.extend(tag.as_ref());
 
         let (header, payload_tag) = buf.split_at_mut(4);
         let (first, rest) = header.split_at_mut(1);
         let sample = &payload_tag[1..1 + hpk.sample_len()];
-        hpk.xor_in_place(sample, &mut first[0], rest)
+        hpk.mask_in_place(sample, &mut first[0], rest)
             .unwrap();
 
         const PROTECTED: &[u8] = &[

@@ -9,7 +9,7 @@ use env_logger;
 use rustls;
 
 use rustls::internal::msgs::enums::ProtocolVersion;
-use rustls::quic;
+use rustls::quic::{self, QuicExt};
 use rustls::quic::ClientQuicExt;
 use rustls::quic::ServerQuicExt;
 use rustls::ClientHello;

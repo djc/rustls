@@ -137,7 +137,7 @@ impl<'a> io::Write for Writer<'a> {
 }
 
 /// Generalises `ClientConnection` and `ServerConnection`
-pub trait Connection: quic::QuicExt + Send + Sync {
+pub trait Connection: Send + Sync {
     /// Read TLS content from `rd`.  This method does internal
     /// buffering, so `rd` can supply TLS messages in arbitrary-
     /// sized chunks (like a socket or pipe might).

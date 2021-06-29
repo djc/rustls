@@ -2956,8 +2956,8 @@ mod test_quic {
 
     // Returns the sender's next secrets to use, or the receiver's error.
     fn step(
-        send: &mut dyn Connection,
-        recv: &mut dyn Connection,
+        send: &mut impl QuicExt,
+        recv: &mut impl QuicExt,
     ) -> Result<Option<quic::KeyChange>, Error> {
         let mut buf = Vec::new();
         let change = loop {
@@ -2980,17 +2980,17 @@ mod test_quic {
 
     #[test]
     fn test_quic_handshake() {
-        fn equal_dir_keys(x: &quic::PacketKey, y: &quic::PacketKey) -> bool {
+        fn equal_dir_keys(x: &quic::PacketSealingKey, y: &quic::PacketOpeningKey) -> bool {
             // Check that these two sets of keys are equal.
             let mut buf = vec![0; 32];
             let (header, payload_tag) = buf.split_at_mut(8);
             let (payload, tag_buf) = payload_tag.split_at_mut(8);
             let tag = x
-                .encrypt_in_place(42, &*header, payload)
+                .seal_in_place(42, &*header, payload)
                 .unwrap();
             tag_buf.copy_from_slice(tag.as_ref());
 
-            let result = y.decrypt_in_place(42, &*header, payload_tag);
+            let result = y.open_in_place(42, &*header, payload_tag);
             match result {
                 Ok(payload) => payload == &[0; 8],
                 Err(_) => false,
@@ -3006,8 +3006,7 @@ mod test_quic {
             }
 
             let (x, y) = (keys(x), keys(y));
-            equal_dir_keys(&x.local.packet, &y.remote.packet)
-                && equal_dir_keys(&x.remote.packet, &y.local.packet)
+            equal_dir_keys(&x.sealing, &y.opening) && equal_dir_keys(&x.sealing, &y.opening)
         }
 
         let kt = KeyType::RSA;
@@ -3099,7 +3098,7 @@ mod test_quic {
         {
             let client_early = client.zero_rtt_keys().unwrap();
             let server_early = server.zero_rtt_keys().unwrap();
-            assert!(equal_dir_keys(&client_early.packet, &server_early.packet));
+            assert!(equal_dir_keys(&client_early.1, &server_early.1));
         }
         step(&mut server, &mut client)
             .unwrap()
@@ -3181,13 +3180,13 @@ mod test_quic {
 
         let mut client_next = client_secrets.next_packet_keys();
         let mut server_next = server_secrets.next_packet_keys();
-        assert!(equal_dir_keys(&client_next.local, &server_next.remote));
-        assert!(equal_dir_keys(&server_next.local, &client_next.remote));
+        assert!(equal_dir_keys(&client_next.0, &server_next.1));
+        assert!(equal_dir_keys(&server_next.0, &client_next.1));
 
         client_next = client_secrets.next_packet_keys();
         server_next = server_secrets.next_packet_keys();
-        assert!(equal_dir_keys(&client_next.local, &server_next.remote));
-        assert!(equal_dir_keys(&server_next.local, &client_next.remote));
+        assert!(equal_dir_keys(&client_next.0, &server_next.1));
+        assert!(equal_dir_keys(&server_next.0, &client_next.1));
     }
 
     #[test]
@@ -3460,41 +3459,32 @@ mod test_quic {
         let client_keys = Keys::initial(Version::V1, &CONNECTION_ID, true);
         assert_eq!(
             client_keys
-                .local
-                .packet
+                .sealing
                 .confidentiality_limit(),
             2u64.pow(23)
         );
-        assert_eq!(
-            client_keys
-                .local
-                .packet
-                .integrity_limit(),
-            2u64.pow(52)
-        );
-        assert_eq!(client_keys.local.packet.tag_len(), 16);
+        assert_eq!(client_keys.opening.integrity_limit(), 2u64.pow(52));
+        assert_eq!(client_keys.sealing.tag_len(), 16);
 
         let mut buf = Vec::new();
         buf.extend(PLAIN_HEADER);
         buf.extend(PAYLOAD);
         let header_len = PLAIN_HEADER.len();
-        let tag_len = client_keys.local.packet.tag_len();
+        let tag_len = client_keys.sealing.tag_len();
         let padding_len = 1200 - header_len - PAYLOAD.len() - tag_len;
         buf.extend(std::iter::repeat(0).take(padding_len));
         let (header, payload) = buf.split_at_mut(header_len);
         let tag = client_keys
-            .local
-            .packet
-            .encrypt_in_place(PACKET_NUMBER, &*header, payload)
+            .sealing
+            .seal_in_place(PACKET_NUMBER, &*header, payload)
             .unwrap();
 
-        let sample_len = client_keys.local.header.sample_len();
+        let sample_len = client_keys.masking.sample_len();
         let sample = &payload[..sample_len];
         let (first, rest) = header.split_at_mut(1);
         client_keys
-            .local
-            .header
-            .xor_in_place(sample, &mut first[0], &mut rest[17..21])
+            .masking
+            .mask_in_place(sample, &mut first[0], &mut rest[17..21])
             .unwrap();
         buf.extend_from_slice(tag.as_ref());
 
@@ -3596,14 +3586,12 @@ mod test_quic {
 
         let server_keys = Keys::initial(Version::V1, &CONNECTION_ID, false);
         server_keys
-            .remote
-            .header
-            .xor_in_place(sample, &mut first[0], &mut rest[17..21])
+            .unmasking
+            .unmask_in_place(sample, &mut first[0], &mut rest[17..21])
             .unwrap();
         let payload = server_keys
-            .remote
-            .packet
-            .decrypt_in_place(PACKET_NUMBER, &*header, payload)
+            .opening
+            .open_in_place(PACKET_NUMBER, &*header, payload)
             .unwrap();
 
         assert_eq!(&payload[..PAYLOAD.len()], PAYLOAD);
