@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use rustls;
 
+use rustls::client::ResolvesClientCert;
 use rustls::internal::msgs::{codec::Codec, persist::ClientSessionValue};
 #[cfg(feature = "quic")]
 use rustls::quic::{self, ClientQuicExt, QuicExt, ServerQuicExt};
@@ -19,7 +20,7 @@ use rustls::Connection;
 use rustls::Error;
 use rustls::KeyLog;
 use rustls::{CipherSuite, ProtocolVersion, SignatureScheme};
-use rustls::{ClientConfig, ClientConnection, ResolvesClientCert};
+use rustls::{ClientConfig, ClientConnection};
 use rustls::{ResolvesServerCert, ServerConfig, ServerConnection};
 use rustls::{Stream, StreamOwned};
 use rustls::{SupportedCipherSuite, ALL_CIPHER_SUITES};
@@ -2708,7 +2709,7 @@ impl rustls::StoresServerSessions for ServerStorage {
 }
 
 struct ClientStorage {
-    storage: Arc<dyn rustls::StoresClientSessions>,
+    storage: Arc<dyn rustls::client::StoresClientSessions>,
     put_count: AtomicUsize,
     get_count: AtomicUsize,
     last_put_key: Mutex<Option<Vec<u8>>>,
@@ -2717,7 +2718,7 @@ struct ClientStorage {
 impl ClientStorage {
     fn new() -> Self {
         ClientStorage {
-            storage: rustls::ClientSessionMemoryCache::new(1024),
+            storage: rustls::client::ClientSessionMemoryCache::new(1024),
             put_count: AtomicUsize::new(0),
             get_count: AtomicUsize::new(0),
             last_put_key: Mutex::new(None),
@@ -2742,7 +2743,7 @@ impl fmt::Debug for ClientStorage {
     }
 }
 
-impl rustls::StoresClientSessions for ClientStorage {
+impl rustls::client::StoresClientSessions for ClientStorage {
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> bool {
         self.put_count
             .fetch_add(1, Ordering::SeqCst);
